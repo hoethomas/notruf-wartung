@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% block content %}
+<div class="actions"><a href="/" class="btn secondary">← Übersicht</a><a href="/maintenance/new/{{facility.id}}" class="btn success">+ Neue Wartung starten</a></div>
+<div class="card"><h1>{{facility.house_name}}</h1><p><b>Anlagennummer:</b> {{facility.number}}</p></div>
+<div class="card"><h2>Stationen & Zimmer</h2>
+{% for s in stations %}
+<div style="border:1px solid #e2e8f0;padding:12px;border-radius:9px;margin-bottom:12px">
+<h3>{{s.name}}</h3>
+<ul>{% for r in rooms if r.station_id==s.id %}<li>{{r.name}}</li>{% else %}<li>Noch keine Zimmer.</li>{% endfor %}</ul>
+<form method="post" action="/station/{{s.id}}/room" class="actions"><input name="name" placeholder="Zimmerbezeichnung" required><button class="btn" type="submit">Zimmer hinzufügen</button></form>
+</div>
+{% endfor %}
+<form method="post" action="/station" class="actions"><input type="hidden" name="facility_id" value="{{facility.id}}"><input name="name" placeholder="Neue Stationsbezeichnung" required><button class="btn secondary">Station hinzufügen</button></form>
+</div>
+{% endblock %}

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title or "Notrufanlagen Wartung" }}</title>
+<style>
+:root{font-family:Arial,sans-serif;color:#172033;background:#f5f7fa}
+body{margin:0}.top{background:#172033;color:#fff;padding:14px 22px;display:flex;justify-content:space-between;align-items:center}
+.wrap{max-width:1200px;margin:24px auto;padding:0 16px}.card{background:white;border-radius:12px;padding:18px;margin-bottom:18px;box-shadow:0 2px 10px #0000000d}
+h1,h2{margin-top:0}.btn{display:inline-block;border:0;border-radius:8px;padding:11px 15px;background:#2563eb;color:white;text-decoration:none;cursor:pointer}.btn.secondary{background:#64748b}.btn.success{background:#16a34a}.btn.danger{background:#dc2626}
+input,select{padding:10px;border:1px solid #cbd5e1;border-radius:7px;font-size:16px;width:100%;box-sizing:border-box}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid #e5e7eb;padding:9px;text-align:left;font-size:14px}th{background:#f1f5f9}
+.status{padding:5px 9px;border-radius:99px;font-size:12px}.ok{background:#dcfce7}.nok{background:#fee2e2}.nf{background:#e2e8f0}
+.check{display:flex;gap:5px}.check label{border:1px solid #cbd5e1;border-radius:7px;padding:7px 8px;cursor:pointer;background:#fff}.check input{width:auto}.check label:has(input:checked){background:#dbeafe;border-color:#2563eb}
+.mini{font-size:12px;color:#64748b}.actions{display:flex;gap:8px;flex-wrap:wrap}
+.signature{border:2px dashed #94a3b8;border-radius:8px;background:#fff;max-width:500px;width:100%;touch-action:none}
+@media(max-width:700px){th,td{font-size:11px;padding:5px}.wrap{margin:12px auto}.check{flex-direction:column}.check label{padding:10px}.scroll{overflow-x:auto}}
+</style>
+</head>
+<body>
+<div class="top"><b>Notrufanlagen Wartung</b>{% if user %}<span>{{ user.display_name }} · <a style="color:white" href="/logout">Abmelden</a></span>{% endif %}</div>
+<div class="wrap">{% block content %}{% endblock %}</div>
+</body>
+</html>
