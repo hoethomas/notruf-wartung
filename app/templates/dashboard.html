@@ -1,0 +1,11 @@
+{% extends "base.html" %}{% block content %}
+<div class="actions" style="justify-content:space-between"><h1>Übersicht</h1><a class="btn" href="/facility/new">+ Neue Anlage</a></div>
+<div class="card"><h2>Anlagen</h2>
+<table><tr><th>Anlagennummer</th><th>Haus</th><th>Wartungen</th><th></th></tr>
+{% for f in facilities %}<tr><td>{{f.number}}</td><td>{{f.house_name}}</td><td>{{f.maintenance_count}}</td><td><a class="btn secondary" href="/facility/{{f.id}}">Öffnen</a></td></tr>{% else %}<tr><td colspan="4">Noch keine Anlagen vorhanden.</td></tr>{% endfor %}
+</table></div>
+<div class="card"><h2>Letzte Wartungen</h2>
+<table><tr><th>Anlage</th><th>Haus</th><th>Techniker</th><th>Status</th><th></th></tr>
+{% for m in maintenances %}<tr><td>{{m.number}}</td><td>{{m.house_name}}</td><td>{{m.display_name}}</td><td><span class="status {% if m.status=='completed' %}ok{% else %}nf{% endif %}">{{m.status}}</span></td><td><a href="/maintenance/{{m.id}}">Öffnen</a></td></tr>{% else %}<tr><td colspan="5">Noch keine Wartungen.</td></tr>{% endfor %}
+</table></div>
+{% endblock %}

@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% block content %}
+<div class="card"><h1>Neue Anlage</h1>{% if error %}<p style="color:#dc2626">{{error}}</p>{% endif %}
+<form method="post"><div class="grid">
+<label>Anlagennummer<input name="number" required></label>
+<label>Name des Hauses<input name="house_name" required></label>
+<label>Erste Station<input name="station_name" required></label>
+</div><br><button class="btn" type="submit">Anlage anlegen</button></form></div>
+{% endblock %}
