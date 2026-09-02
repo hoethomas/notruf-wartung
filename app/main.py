@@ -91,6 +91,7 @@ def init_db():
         room_name TEXT NOT NULL,
         zt TEXT, zl TEXT, rt_b1 TEXT, rt_b2 TEXT, rt_b3 TEXT, rt TEXT,
         rt_bad TEXT, pt_bad TEXT, zt_bad TEXT, at_bad TEXT,
+        issue_details TEXT,
         FOREIGN KEY(maintenance_id) REFERENCES maintenances(id)
     );
     """)
@@ -98,6 +99,8 @@ def init_db():
     cols = {row[1] for row in c.execute("PRAGMA table_info(results)").fetchall()}
     if "rt" not in cols:
         c.execute("ALTER TABLE results ADD COLUMN rt TEXT")
+    if "issue_details" not in cols:
+        c.execute("ALTER TABLE results ADD COLUMN issue_details TEXT")
     user = c.execute("SELECT id FROM users LIMIT 1").fetchone()
     if not user:
         c.execute("INSERT INTO users(username,password_hash,display_name) VALUES(?,?,?)",
@@ -265,8 +268,18 @@ async def maintenance_save(request: Request, mid: int):
     for row in c.execute("SELECT id FROM results WHERE maintenance_id=?", (mid,)).fetchall():
         rid = row["id"]
         vals = [form.get(f"{key}_{rid}") for key, _, _ in CHECKS]
-        c.execute("""UPDATE results SET zt=?,zl=?,rt_b1=?,rt_b2=?,rt_b3=?,rt=?,pt_bad=?,rt_bad=?,zt_bad=?,at_bad=? WHERE id=?""",
-                  (*vals, rid))
+        details = {}
+        raw_details = form.get(f"details_{rid}", "") or ""
+        try:
+            details = json.loads(raw_details) if raw_details else {}
+            if not isinstance(details, dict):
+                details = {}
+        except Exception:
+            details = {}
+        # Details nur für tatsächlich als NOK markierte Prüfungen speichern.
+        details = {k: str(v).strip() for k, v in details.items() if k in {c[0] for c in CHECKS} and vals[[c[0] for c in CHECKS].index(k)] == "NOK" and str(v).strip()}
+        c.execute("""UPDATE results SET zt=?,zl=?,rt_b1=?,rt_b2=?,rt_b3=?,rt=?,pt_bad=?,rt_bad=?,zt_bad=?,at_bad=?,issue_details=? WHERE id=?""",
+                  (*vals, json.dumps(details, ensure_ascii=False), rid))
     c.commit(); c.close()
     return RedirectResponse(f"/maintenance/{mid}", 303)
 
@@ -285,14 +298,9 @@ async def maintenance_complete(request: Request, mid: int):
 
 
 def room_applicable(room_name: str, key: str) -> bool:
-    """Abbild der grauen/nicht relevanten Felder aus dem VDE-Muster."""
-    name = (room_name or "").strip().lower()
-    if "dienstzimmer" in name:
-        return key in {"zt", "zl"}
-    if "stationsbad" in name:
-        return key in {"zt", "zl", "pt_bad", "rt_bad", "zt_bad"}
-    # Standard: Patienten-/Bettenzimmer
-    return key not in {"rt_b3", "pt_bad"}
+    # Alle Prüfspalten werden im Protokoll dargestellt. Es gibt keine ausgegrauten
+    # Felder mehr; "nicht ausgeführt" kann bei den RT/PT/ZT/AT-Prüfungen gewählt werden.
+    return True
 
 
 def make_pdf(mid):
@@ -305,102 +313,113 @@ def make_pdf(mid):
         raise ValueError("Wartung nicht gefunden")
 
     out = io.BytesIO()
-    # Das Originalmuster ist ein einseitiges Hochformat-A4-Formular.
-    doc = SimpleDocTemplate(out, pagesize=A4, rightMargin=10*mm, leftMargin=10*mm,
-                            topMargin=8*mm, bottomMargin=8*mm)
+    doc = SimpleDocTemplate(out, pagesize=A4, rightMargin=8*mm, leftMargin=8*mm,
+                            topMargin=7*mm, bottomMargin=7*mm)
     styles = getSampleStyleSheet()
     title = ParagraphStyle("protocol_title", parent=styles["Normal"], fontName="Helvetica-Bold",
-                           fontSize=12, leading=14, alignment=1, spaceAfter=0)
+                           fontSize=12, leading=14, alignment=1)
     small = ParagraphStyle("protocol_small", parent=styles["Normal"], fontSize=6.5, leading=7.5)
-    tiny = ParagraphStyle("protocol_tiny", parent=styles["Normal"], fontSize=6, leading=6.8)
+    tiny = ParagraphStyle("protocol_tiny", parent=styles["Normal"], fontSize=6.5, leading=7.5)
     center = ParagraphStyle("protocol_center", parent=small, alignment=1)
+    nok_style = ParagraphStyle("protocol_nok", parent=small, fontSize=7, leading=8)
 
-    # Kopfzeile wie im Muster: links Hauscode, rechts Station.
     header = Table([
         [Paragraph("Inspektion von Rufanlagen nach DIN VDE 0834 Ziffer 11.2", title), ""],
         [Paragraph(f"<b>{m['hauscode']}</b>", center), Paragraph(f"<b>Station:</b> {m['station']}", center)],
-    ], colWidths=[90*mm, 90*mm], rowHeights=[10*mm, 10*mm])
+    ], colWidths=[97*mm, 97*mm], rowHeights=[10*mm, 9*mm])
     header.setStyle(TableStyle([
-        ("SPAN", (0,0), (-1,0)),
-        ("GRID", (0,0), (-1,-1), 0.6, colors.black),
-        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-    ]))
+        ("SPAN", (0,0), (-1,0)), ("GRID", (0,0), (-1,-1), 0.6, colors.black),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE")]))
 
-    headers = ["Raum Nr.", "Bezeichnung"] + [x[1] for x in CHECKS] + ["o.k."]
+    headers = ["Bezeichnung"] + [x[1] for x in CHECKS]
     data = [headers]
     noks = []
-    for idx, r in enumerate(rows, start=1):
-        line = [str(idx), r["room_name"]]
-        row_has_nok = False
+    for r in rows:
+        line = [Paragraph(str(r["room_name"]), small)]
+        try:
+            details = json.loads(r["issue_details"] or "{}")
+            if not isinstance(details, dict): details = {}
+        except Exception:
+            details = {}
         for key, label, _ in CHECKS:
             val = r[key]
-            if not room_applicable(r["room_name"], key):
-                line.append("")
-            else:
-                line.append("✓" if val == "OK" else ("NOK" if val == "NOK" else ("n.a." if val == "NF" else "")))
-                if val == "NOK":
-                    row_has_nok = True
-                    noks.append(f"{idx} – {r['room_name']} – {label}")
-        line.append("NOK" if row_has_nok else ("✓" if all((not room_applicable(r['room_name'], k) or r[k] == "OK") for k,_,_ in CHECKS) else ""))
+            line.append("✓" if val == "OK" else ("NOK" if val == "NOK" else ("n.a." if val == "NF" else "")))
+            if val == "NOK":
+                detail = details.get(key, "")
+                noks.append((r["room_name"], label, detail))
         data.append(line)
 
-    col_widths = [14*mm, 37*mm] + [11.5*mm]*len(CHECKS) + [10*mm]
+    # Eine breite Zimmer-Spalte, danach gleichmäßige Prüfspalten; keine Raum-Nr. und keine o.k.-Spalte.
+    col_widths = [43*mm] + [15.1*mm]*len(CHECKS)
     table = Table(data, repeatRows=1, colWidths=col_widths, hAlign="CENTER")
-    ts = [
+    table.setStyle(TableStyle([
         ("GRID", (0,0), (-1,-1), 0.45, colors.black),
         ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#eeeeee")),
         ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
-        ("FONTSIZE", (0,0), (-1,0), 6.2),
-        ("FONTSIZE", (0,1), (-1,-1), 6.2),
+        ("FONTSIZE", (0,0), (-1,0), 6.1),
+        ("FONTSIZE", (1,1), (-1,-1), 6.4),
         ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
         ("ALIGN", (0,0), (-1,-1), "CENTER"),
-        ("ALIGN", (1,1), (1,-1), "LEFT"),
+        ("ALIGN", (0,1), (0,-1), "LEFT"),
         ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, colors.white]),
-    ]
-    # Graue/nicht auszuführende Felder wie im Muster.
-    for row_i, r in enumerate(rows, start=1):
-        for check_i, (key, _, _) in enumerate(CHECKS, start=2):
-            if not room_applicable(r["room_name"], key):
-                ts.append(("BACKGROUND", (check_i,row_i), (check_i,row_i), colors.HexColor("#bdbdbd")))
-    table.setStyle(TableStyle(ts))
-
-    # Legende und Unterschriftsbereich entsprechend dem Muster.
-    legend = Table([[Paragraph(
-        "ZT = Zimmerterminal, ZL = Zimmerleuchte, RT B1 = Ruftaster Bett 1, "
-        "RT B2 = Ruftaster Bett 2, RT B3 = Ruftaster Bett 3, RT = Ruftaster, "
-        "PT Bad = Pneumatischer Taster, RT Bad = Ruftaster im Bad, "
-        "ZT Bad = Zugtaster im Bad, AT Bad = Abstelltaster im Bad, o.k. = ohne Beanstandung",
-        tiny)]], colWidths=[180*mm])
-    legend.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.6,colors.black),("LEFTPADDING",(0,0),(-1,-1),2),("RIGHTPADDING",(0,0),(-1,-1),2)]))
-
-    notes = Table([
-        [Paragraph("<b>Name des Prüfers:</b>", small), Paragraph("<b>Datum und Unterschrift:</b>", small)],
-        [Paragraph("*1 mech. defekt &nbsp;&nbsp;&nbsp;&nbsp; *6 Ruf löst nicht aus &nbsp;&nbsp;&nbsp;&nbsp; *11 keine Sprechverbind.<br/>"
-                   "*2 Taste klemmt &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; *7 rote Leuchte defekt &nbsp;&nbsp;&nbsp;&nbsp; *12 ZT-Schnur fehlerhaft<br/>"
-                   "*3 AW Anzeige defekt &nbsp;&nbsp; *8 grüne Leuchte defekt<br/>"
-                   "*4 BL defekt &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; *9 weiße Leuchte defekt<br/>"
-                   "*5 Rufnachsendung &nbsp;&nbsp;&nbsp;&nbsp; *10 gelbe Leuchte defekt", tiny), ""]
-    ], colWidths=[110*mm, 70*mm], rowHeights=[7*mm, 23*mm])
-    notes.setStyle(TableStyle([
-        ("GRID",(0,0),(-1,-1),0.6,colors.black),
-        ("VALIGN",(0,0),(-1,-1),"TOP"),
-        ("LEFTPADDING",(0,0),(-1,-1),2), ("TOPPADDING",(0,0),(-1,-1),2)
+        ("TOPPADDING", (0,0), (-1,-1), 4), ("BOTTOMPADDING", (0,0), (-1,-1), 4),
     ]))
 
-    story = [header, Spacer(1, 2*mm), table, Spacer(1, 2*mm), legend, Spacer(1, 2*mm)]
+    story = [header, Spacer(1, 2*mm), table, Spacer(1, 3*mm)]
     if noks:
-        story.append(Paragraph("<b>Beanstandungen:</b> " + " | ".join(noks), tiny))
-        story.append(Spacer(1, 1*mm))
+        issue_data = [[Paragraph("Zusammenfassung der Mängel", ParagraphStyle("issue_head", parent=small, fontName="Helvetica-Bold"))]]
+        for room, label, detail in noks:
+            text = f"<b>{room}</b> – {label} – <b>NOK</b>"
+            if detail:
+                text += f"<br/>Details: {detail}"
+            issue_data.append([Paragraph(text, nok_style)])
+        issues = Table(issue_data, colWidths=[194*mm])
+        issues.setStyle(TableStyle([
+            ("BOX", (0,0), (-1,-1), 0.6, colors.black),
+            ("INNERGRID", (0,0), (-1,-1), 0.35, colors.black),
+            ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#eeeeee")),
+            ("VALIGN", (0,0), (-1,-1), "TOP"),
+            ("LEFTPADDING", (0,0), (-1,-1), 3), ("RIGHTPADDING", (0,0), (-1,-1), 3),
+            ("TOPPADDING", (0,0), (-1,-1), 3), ("BOTTOMPADDING", (0,0), (-1,-1), 3),
+        ]))
+        story.extend([issues, Spacer(1, 3*mm)])
+    else:
+        story.extend([Paragraph("<b>Zusammenfassung der Mängel:</b> Keine Beanstandungen.", small), Spacer(1, 3*mm)])
+
+    legend_text = ("ZT = Zimmerterminal · ZL = Zimmerleuchte · RT B1/B2/B3 = Ruftaster Bett 1/2/3 · "
+                   "RT = Ruftaster · PT Bad = Pneumatischer Taster · RT Bad = Ruftaster im Bad · "
+                   "ZT Bad = Zugtaster im Bad · AT Bad = Abstelltaster im Bad")
+    legend = Table([[Paragraph(legend_text, tiny)]], colWidths=[194*mm])
+    legend.setStyle(TableStyle([
+        ("BOX", (0,0), (-1,-1), 0.6, colors.black),
+        ("LEFTPADDING", (0,0), (-1,-1), 3), ("RIGHTPADDING", (0,0), (-1,-1), 3),
+        ("TOPPADDING", (0,0), (-1,-1), 3), ("BOTTOMPADDING", (0,0), (-1,-1), 3),
+    ]))
+    story.append(legend)
+    story.append(Spacer(1, 3*mm))
+
+    sig_img = ""
     if m["signature"] and m["signature"].startswith("data:image"):
         try:
             raw = base64.b64decode(m["signature"].split(",",1)[1])
-            sig_img = Image(io.BytesIO(raw), width=45*mm, height=15*mm)
-            notes._cellvalues[1][1] = sig_img
+            sig_img = Image(io.BytesIO(raw), width=55*mm, height=18*mm)
         except Exception:
-            pass
+            sig_img = ""
+
+    completed = m["completed_at"] or ""
+    notes = Table([
+        [Paragraph("<b>Name des Prüfers:</b>", small), Paragraph("<b>Datum und Unterschrift:</b>", small)],
+        [Paragraph(str(m["display_name"]), small), sig_img],
+        [Paragraph(f"<b>Abschlussdatum:</b> {completed}", small), ""],
+    ], colWidths=[97*mm, 97*mm], rowHeights=[7*mm, 22*mm, 7*mm])
+    notes.setStyle(TableStyle([
+        ("GRID", (0,0), (-1,-1), 0.6, colors.black),
+        ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ("LEFTPADDING", (0,0), (-1,-1), 3), ("TOPPADDING", (0,0), (-1,-1), 3),
+    ]))
     story.append(notes)
     story.append(Spacer(1, 2*mm))
-    story.append(Paragraph(f"Wartung begonnen: {m['created_at']} &nbsp;&nbsp;&nbsp; abgeschlossen: {m['completed_at'] or ''} &nbsp;&nbsp;&nbsp; Prüfer: {m['display_name']}", tiny))
+    story.append(Paragraph(f"Wartung begonnen: {m['created_at']} · abgeschlossen: {completed}", tiny))
     doc.build(story)
     out.seek(0)
     return out
