@@ -184,15 +184,17 @@ def make_pdf(mid):
     doc = SimpleDocTemplate(out, pagesize=A4, rightMargin=7*mm, leftMargin=7*mm, topMargin=6*mm, bottomMargin=6*mm)
     styles = getSampleStyleSheet()
     title = ParagraphStyle("title", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=13, leading=15, alignment=1)
+    subtitle = ParagraphStyle("subtitle", parent=styles["Normal"], fontName="Helvetica", fontSize=6.2, leading=7, alignment=1, spaceBefore=1)
     small = ParagraphStyle("small", parent=styles["Normal"], fontSize=6.5, leading=7.5)
     center = ParagraphStyle("center", parent=small, alignment=1)
     issue_style = ParagraphStyle("issue", parent=small, fontSize=7, leading=8)
 
+    title_block = [Paragraph("Zusammenfassung der Rufanlagenwartung", title), Paragraph("Dies ist nicht das offizielle Wartungsprotokoll. Das Wartungsprotokoll erhalten Sie separat.", subtitle)]
     header = Table([
-        [Paragraph("Zusammenfassung der Rufanlagenwartung", title), ""],
+        [title_block, ""],
         [Paragraph(f"<b>Haus:</b> {m['hauscode']}", center), Paragraph(f"<b>Station:</b> {m['station']}", center)],
         [Paragraph(f"<b>Überprüfung für das Jahr:</b> {m['inspection_year'] or ''}", center), Paragraph(f"<b>Prüfer:</b> {m['inspector_name'] or m['display_name'] or ''}", center)],
-    ], colWidths=[99*mm,99*mm], rowHeights=[10*mm,8*mm,8*mm])
+    ], colWidths=[99*mm,99*mm], rowHeights=[13*mm,8*mm,8*mm])
     header.setStyle(TableStyle([("SPAN",(0,0),(-1,0)),("GRID",(0,0),(-1,-1),0.6,colors.black),("VALIGN",(0,0),(-1,-1),"MIDDLE")]))
 
     data = [["Bezeichnung"] + [x[1] for x in CHECKS]]; noks=[]
@@ -232,7 +234,7 @@ def make_pdf(mid):
     notes=Table([
         [Paragraph("<b>Name des Prüfers:</b>",small),Paragraph("<b>Unterschrift:</b>",small)],
         [Paragraph(str(m["inspector_name"] or m["display_name"] or ""),small),sig_img],
-        [Paragraph(f"<b>Abschlussdatum:</b> {completed}",small),Paragraph("Dies ist nicht das offizielle Wartungsprotokoll. Das Wartungsprotokoll erhalten Sie separat.",small)],
+        [Paragraph(f"<b>Abschlussdatum:</b> {completed}",small),Paragraph("",small)],
     ],colWidths=[99*mm,99*mm],rowHeights=[7*mm,22*mm,12*mm])
     notes.setStyle(TableStyle([("GRID",(0,0),(-1,-1),0.6,colors.black),("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),3)])); story.append(notes)
     doc.build(story); out.seek(0); return out
