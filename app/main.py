@@ -203,11 +203,11 @@ def make_pdf(mid):
         for key,label,_ in CHECKS:
             val=r[key]
             if val == "OK":
-                line.append(Paragraph("<font color='#16a34a'><b>✓</b></font>", center))
+                line.append(Paragraph("<font color='#16a34a'><b>✓</b></font>", ParagraphStyle("okp", parent=center, fontSize=11, leading=12)))
             elif val == "NOK":
-                line.append(Paragraph("<font color='#dc2626'><b>!</b></font>", center))
+                line.append(Paragraph("<font color='#dc2626'><b>!</b></font>", ParagraphStyle("nokp", parent=center, fontSize=11, leading=12)))
             elif val == "NF":
-                line.append(Paragraph("<font color='#64748b'><b>—</b></font>", center))
+                line.append(Paragraph("<font color='#64748b'><b>—</b></font>", ParagraphStyle("nfp", parent=center, fontSize=11, leading=12)))
             else:
                 line.append(Paragraph("", center))
             if val=="NOK": noks.append((r["room_name"],label,details.get(key,"")))
@@ -227,8 +227,24 @@ def make_pdf(mid):
     else:
         story.extend([Paragraph("<b>Zusammenfassung der Mängel:</b> Keine Beanstandungen.",small),Spacer(1,3*mm)])
 
-    legend=Paragraph("ZT = Zimmerterminal · ZL = Zimmerleuchte · RT B1/B2/B3 = Ruftaster Bett 1/2/3 · RT = Ruftaster · PT Bad = Pneumatischer Taster · RT Bad = Ruftaster im Bad · ZT Bad = Zugtaster im Bad · AT Bad = Abstelltaster im Bad",small)
-    legend_box=Table([[legend]],colWidths=[198*mm]); legend_box.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.6,colors.black),("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3)])); story.append(legend_box); story.append(Spacer(1,3*mm))
+    legend_title=Paragraph("<b>Legende</b>", ParagraphStyle("legendtitle", parent=small, fontName="Helvetica-Bold", fontSize=7.2, leading=8))
+    legend_cells=[
+        [Paragraph("<font color='#16a34a'><b>✓</b></font>", ParagraphStyle("lgok", parent=center, fontSize=11, leading=11)), Paragraph("<b>OK</b> – Prüfung in Ordnung", small)],
+        [Paragraph("<font color='#dc2626'><b>!</b></font>", ParagraphStyle("lgnok", parent=center, fontSize=11, leading=11)), Paragraph("<b>NOK</b> – Mangel festgestellt", small)],
+        [Paragraph("<font color='#64748b'><b>—</b></font>", ParagraphStyle("lgnf", parent=center, fontSize=11, leading=11)), Paragraph("<b>nicht ausgeführt</b> – Prüfung nicht durchgeführt", small)],
+    ]
+    legend_table=Table(legend_cells, colWidths=[12*mm,186*mm])
+    legend_table.setStyle(TableStyle([
+        ("BOX",(0,0),(-1,-1),0.6,colors.black),("INNERGRID",(0,0),(-1,-1),0.3,colors.black),
+        ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ALIGN",(0,0),(0,-1),"CENTER"),
+        ("BACKGROUND",(0,0),(0,0),colors.HexColor("#dcfce7")),
+        ("BACKGROUND",(0,1),(0,1),colors.HexColor("#fee2e2")),
+        ("BACKGROUND",(0,2),(0,2),colors.HexColor("#e2e8f0")),
+        ("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),2.5),("BOTTOMPADDING",(0,0),(-1,-1),2.5)
+    ]))
+    legend_box=Table([[legend_title],[legend_table]],colWidths=[198*mm])
+    legend_box.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.6,colors.black),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eeeeee")),("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3)]))
+    story.append(legend_box); story.append(Spacer(1,3*mm))
 
     sig_img=""
     if m["signature"] and m["signature"].startswith("data:image"):
