@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block content %}
-<div class="actions" style="justify-content:space-between"><div><h1>Wartungen</h1><p class="mini">{{ house_count }} Häuser · Haus → Station → Zimmer</p></div></div>
+<div class="actions" style="justify-content:space-between"><div><h1>Wartungen</h1><p class="mini">{{ house_count }} Häuser · Haus → Station → Zimmer</p></div><div><a class="btn secondary" href="/import">VCIP importieren</a>{% if is_admin %} <a class="btn secondary" href="/users">Userverwaltung</a>{% endif %}</div></div>
 <div class="card">
 <h2>Neue Wartung</h2><p class="mini">Haus auswählen → Station auswählen → Jahr auswählen → hinterlegte Zimmer werden automatisch übernommen.</p>
 <form method="post" action="/maintenance/start" id="startForm"><div class="grid">

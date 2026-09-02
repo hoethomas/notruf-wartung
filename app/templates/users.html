@@ -1,0 +1,7 @@
+{% extends "base.html" %}{% block content %}
+<div class="actions"><a href="/" class="btn secondary">← Übersicht</a></div>
+<div class="card"><h1>Userverwaltung</h1><p class="mini">Benutzer für die Anmeldung verwalten.</p>
+{% if request.query_params.get('success') %}<p class="success-text">{{request.query_params.get('success')}}</p>{% endif %}{% if request.query_params.get('error') %}<p class="error-text">{{request.query_params.get('error')}}</p>{% endif %}
+<form method="post" action="/users/create"><div class="grid"><label>Benutzername<input name="username" required></label><label>Name des Benutzers<input name="display_name" required></label><label>Passwort<input type="password" name="password" required></label><label>Rolle<select name="role"><option value="technician">Techniker</option><option value="admin">Administrator</option></select></label></div><br><button class="btn success" type="submit">Benutzer anlegen</button></form></div>
+<div class="card"><h2>Vorhandene Benutzer</h2><table><tr><th>Benutzername</th><th>Name</th><th>Rolle</th><th></th></tr>{% for x in users %}<tr><td>{{x.username}}</td><td>{{x.display_name}}</td><td>{{'Administrator' if x.role=='admin' else 'Techniker'}}</td><td>{% if x.id != user.id %}<form method="post" action="/users/{{x.id}}/delete" onsubmit="return confirm('Benutzer wirklich löschen?')"><button class="btn danger" type="submit">Löschen</button></form>{% endif %}</td></tr>{% endfor %}</table></div>
+{% endblock %}

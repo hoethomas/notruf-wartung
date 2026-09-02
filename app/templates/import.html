@@ -1,0 +1,8 @@
+{% extends "base.html" %}{% block content %}
+<div class="actions"><a href="/" class="btn secondary">← Übersicht</a><a href="/users" class="btn secondary">Userverwaltung</a></div>
+<div class="card"><h1>VCIP-Programmierung importieren</h1><p class="mini">Die VCIP-Datei wird lokal analysiert. Daraus werden automatisch Hauscodes, Stationen und Zimmer für die Prüfliste erstellt. Bereits vorhandene Häuser mit denselben Hauscodes werden durch die neue Programmierung ersetzt.</p>
+{% if request.query_params.get('success') %}<p class="success-text">Import erfolgreich: {{request.query_params.get('success')}} Zimmer übernommen.</p>{% endif %}
+{% if request.query_params.get('error') %}<p class="error-text">Importfehler: {{request.query_params.get('error')}}</p>{% endif %}
+<form method="post" action="/import/vcip-file" enctype="multipart/form-data"><label>VCIP-Datei<input type="file" name="file_upload" accept=".vcip,application/zip" required></label><br><button class="btn success" type="submit">VCIP analysieren und importieren</button></form></div>
+<div class="card"><h2>So funktioniert es</h2><ol><li>VCIP-Datei auswählen</li><li>Programmierung automatisch auslesen lassen</li><li>Haus → Station → Zimmer werden daraus aufgebaut</li><li>Danach kann direkt eine Wartung gestartet werden</li></ol></div>
+{% endblock %}
