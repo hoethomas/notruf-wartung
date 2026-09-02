@@ -1,22 +1,65 @@
 {% extends "base.html" %}{% block content %}
 <div class="actions"><a href="/" class="btn secondary">← Übersicht</a><a class="btn" href="/maintenance/{{m.id}}/pdf" target="_blank">PDF anzeigen</a></div>
 <div class="card"><h1>Wartung</h1><p><b>Haus:</b> {{m.hauscode}} · <b>Station:</b> {{m.station}} · <b>Techniker:</b> {{m.display_name}} · <b>Status:</b> {{"abgeschlossen" if m.status=="completed" else "offen"}}</p></div>
-<form method="post" action="/maintenance/{{m.id}}/save">
-<div class="card scroll"><table><tr><th>Zimmer</th>{% for c in checks %}<th>{{c[1]}}</th>{% endfor %}</tr>
+<form method="post" action="/maintenance/{{m.id}}/save" id="maintenanceForm">
+<div class="card scroll"><table><tr><th>Bezeichnung</th>{% for c in checks %}<th>{{c[1]}}</th>{% endfor %}</tr>
 {% for r in rows %}<tr><td><b>{{r.room_name}}</b></td>
 {% for key,label,options in checks %}<td><div class="check">
-{% for opt in options %}<label><input type="radio" name="{{key}}_{{r.id}}" value="{{opt}}" {% if r[key]==opt %}checked{% endif %}>{{"nicht ausgeführt" if opt=="NF" else opt}}</label>{% endfor %}
-</div></td>{% endfor %}</tr>{% endfor %}
-</table></div><button class="btn" type="submit">Zwischenspeichern</button></form>
+{% for opt in options %}<label><input type="radio" name="{{key}}_{{r.id}}" value="{{opt}}" {% if r[key]==opt %}checked{% endif %} onchange="checkNok('{{r.id}}','{{key}}','{{label}}',this.checked)">{{"nicht ausgeführt" if opt=="NF" else opt}}</label>{% endfor %}
+</div></td>{% endfor %}</tr>
+<tr id="detailrow_{{r.id}}" class="detail-row"><td colspan="{{checks|length + 1}}"><div id="details_{{r.id}}"></div><input type="hidden" name="details_{{r.id}}" id="detailinput_{{r.id}}" value="{{r.issue_details or '{}'}}"></td></tr>
+{% endfor %}</table></div>
+<button class="btn" type="submit">Zwischenspeichern</button></form>
 
-<div class="card"><h2>Wartung abschließen</h2><p class="mini">Unterschrift direkt mit Maus, Stift oder Finger.</p>
+<div class="card"><h2>Wartung abschließen</h2><p class="mini">Unterschrift direkt mit Maus, Stift oder Finger. Das Abschlussdatum wird automatisch beim Setzen der Unterschrift gespeichert.</p>
 <canvas id="sig" class="signature" width="700" height="220"></canvas>
 <form method="post" action="/maintenance/{{m.id}}/complete" onsubmit="return saveSig()">
 <input type="hidden" id="signature" name="signature">
 <br><button class="btn success" type="submit">Wartung abschließen & PDF erzeugen</button>
 <button type="button" class="btn secondary" onclick="clearSig()">Unterschrift löschen</button>
 </form></div>
+
 <script>
+const checkLabels={{ checks|map(attribute=0)|list|tojson }};
+const checkNames={{ checks|map(attribute=1)|list|tojson }};
+const details={};
+{% for r in rows %}try{Object.assign(details[{{r.id}}]={{r.issue_details or '{}'}})}catch(e){details[{{r.id}}]={}}{% endfor %}
+
+function checkNok(rid,key,label,isChecked){
+  const radios=document.querySelectorAll('input[name="'+key+'_'+rid+'"]');
+  let value=''; radios.forEach(x=>{if(x.checked)value=x.value});
+  if(value==='NOK'){
+    if(!details[rid]) details[rid]={};
+    if(details[rid][key]===undefined) details[rid][key]='';
+  }else if(details[rid]){
+    delete details[rid][key];
+  }
+  renderDetails(rid);
+}
+function renderDetails(rid){
+  const box=document.getElementById('details_'+rid); if(!box)return;
+  const parts=[];
+  checkLabels.forEach((key,i)=>{
+    const radios=document.querySelectorAll('input[name="'+key+'_'+rid+'"]');
+    let value=''; radios.forEach(x=>{if(x.checked)value=x.value});
+    if(value==='NOK'){
+      const safe=(details[rid]&&details[rid][key])||'';
+      parts.push('<div class="nok-detail"><label><b>'+checkNames[i]+' – Details zum Mangel</b></label><textarea rows="2" data-rid="'+rid+'" data-key="'+key+'" placeholder="Bitte Mangel beschreiben...">'+escapeHtml(safe)+'</textarea></div>');
+    }
+  });
+  box.innerHTML=parts.join('');
+  box.querySelectorAll('textarea').forEach(t=>t.addEventListener('input',()=>{if(!details[rid])details[rid]={};details[rid][t.dataset.key]=t.value;syncDetails(rid)}));
+  document.getElementById('detailrow_'+rid).style.display=parts.length?'table-row':'none';
+  syncDetails(rid);
+}
+function syncDetails(rid){
+  const clean={};
+  if(details[rid]) Object.keys(details[rid]).forEach(k=>{if(details[rid][k] && details[rid][k].trim())clean[k]=details[rid][k].trim()});
+  document.getElementById('detailinput_'+rid).value=JSON.stringify(clean);
+}
+function escapeHtml(s){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
+{% for r in rows %}renderDetails({{r.id}});{% endfor %}
+
 const c=document.getElementById('sig'),x=c.getContext('2d'); x.lineWidth=2; x.lineCap='round';
 let down=false,last=null;
 function pos(e){const r=c.getBoundingClientRect(); const t=e.touches?e.touches[0]:e; return {x:(t.clientX-r.left)*c.width/r.width,y:(t.clientY-r.top)*c.height/r.height}}
