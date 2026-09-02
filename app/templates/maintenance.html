@@ -10,7 +10,6 @@
 <button class="btn" type="submit">Zwischenspeichern</button></form>
 <div class="card"><h2>Zimmer manuell hinzufügen</h2><form method="post" action="/maintenance/{{m.id}}/add-room" class="inline-form"><input name="room_name" placeholder="Zimmerbezeichnung eingeben" required><button class="btn" type="submit">Zimmer hinzufügen</button></form><p class="mini">Das Zimmer wird nur zu dieser Wartung hinzugefügt.</p></div>
 <div class="card"><h2>Wartung abschließen</h2><p class="mini">Beim Abschluss werden die Daten gespeichert. Das Abschlussdatum entspricht dem Zeitpunkt, an dem die Unterschrift gesetzt und die Wartung abgeschlossen wird.</p>
-<label>E-Mail-Adresse für das Protokoll (optional)<input type="email" name="email_address" id="email_address" form="completeForm" placeholder="name@beispiel.at" value="{{m.email_address or ''}}"></label><br>
 <canvas id="sig" class="signature" width="700" height="220"></canvas>
 <form method="post" action="/maintenance/{{m.id}}/complete" id="completeForm" onsubmit="return saveSig()"><input type="hidden" id="signature" name="signature"><input type="hidden" id="completeInspector" name="inspector_name"><input type="hidden" id="completeYear" name="inspection_year"><br><button class="btn success" type="submit">Wartung abschließen</button><button type="button" class="btn secondary" onclick="clearSig()">Unterschrift löschen</button></form></div>
 <script>
