@@ -34,8 +34,9 @@ CHECKS = [
     ("rt_b1", "RT B1", ["OK", "NOK", "NF"]),
     ("rt_b2", "RT B2", ["OK", "NOK", "NF"]),
     ("rt_b3", "RT B3", ["OK", "NOK", "NF"]),
-    ("rt_bad", "RT Bad", ["OK", "NOK", "NF"]),
+    ("rt", "RT", ["OK", "NOK", "NF"]),
     ("pt_bad", "PT Bad", ["OK", "NOK", "NF"]),
+    ("rt_bad", "RT Bad", ["OK", "NOK", "NF"]),
     ("zt_bad", "ZT Bad", ["OK", "NOK", "NF"]),
     ("at_bad", "AT Bad", ["OK", "NOK", "NF"]),
 ]
@@ -88,11 +89,15 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         maintenance_id INTEGER NOT NULL,
         room_name TEXT NOT NULL,
-        zt TEXT, zl TEXT, rt_b1 TEXT, rt_b2 TEXT, rt_b3 TEXT,
+        zt TEXT, zl TEXT, rt_b1 TEXT, rt_b2 TEXT, rt_b3 TEXT, rt TEXT,
         rt_bad TEXT, pt_bad TEXT, zt_bad TEXT, at_bad TEXT,
         FOREIGN KEY(maintenance_id) REFERENCES maintenances(id)
     );
     """)
+    # Migration für bestehende Test-Datenbanken
+    cols = {row[1] for row in c.execute("PRAGMA table_info(results)").fetchall()}
+    if "rt" not in cols:
+        c.execute("ALTER TABLE results ADD COLUMN rt TEXT")
     user = c.execute("SELECT id FROM users LIMIT 1").fetchone()
     if not user:
         c.execute("INSERT INTO users(username,password_hash,display_name) VALUES(?,?,?)",
@@ -173,7 +178,7 @@ def home(request: Request):
         SELECT m.*, u.display_name,
                COUNT(res.id) AS room_count,
                SUM(CASE WHEN res.zt='NOK' OR res.zl='NOK' OR res.rt_b1='NOK' OR res.rt_b2='NOK'
-                         OR res.rt_b3='NOK' OR res.rt_bad='NOK' OR res.pt_bad='NOK'
+                         OR res.rt_b3='NOK' OR res.rt='NOK' OR res.rt_bad='NOK' OR res.pt_bad='NOK'
                          OR res.zt_bad='NOK' OR res.at_bad='NOK' THEN 1 ELSE 0 END) AS nok_rooms
         FROM maintenances m
         JOIN users u ON u.id=m.technician_id
@@ -260,7 +265,7 @@ async def maintenance_save(request: Request, mid: int):
     for row in c.execute("SELECT id FROM results WHERE maintenance_id=?", (mid,)).fetchall():
         rid = row["id"]
         vals = [form.get(f"{key}_{rid}") for key, _, _ in CHECKS]
-        c.execute("""UPDATE results SET zt=?,zl=?,rt_b1=?,rt_b2=?,rt_b3=?,rt_bad=?,pt_bad=?,zt_bad=?,at_bad=? WHERE id=?""",
+        c.execute("""UPDATE results SET zt=?,zl=?,rt_b1=?,rt_b2=?,rt_b3=?,rt=?,pt_bad=?,rt_bad=?,zt_bad=?,at_bad=? WHERE id=?""",
                   (*vals, rid))
     c.commit(); c.close()
     return RedirectResponse(f"/maintenance/{mid}", 303)
@@ -279,6 +284,17 @@ async def maintenance_complete(request: Request, mid: int):
     return RedirectResponse(f"/maintenance/{mid}/pdf", 303)
 
 
+def room_applicable(room_name: str, key: str) -> bool:
+    """Abbild der grauen/nicht relevanten Felder aus dem VDE-Muster."""
+    name = (room_name or "").strip().lower()
+    if "dienstzimmer" in name:
+        return key in {"zt", "zl"}
+    if "stationsbad" in name:
+        return key in {"zt", "zl", "pt_bad", "rt_bad", "zt_bad"}
+    # Standard: Patienten-/Bettenzimmer
+    return key not in {"rt_b3", "pt_bad"}
+
+
 def make_pdf(mid):
     c = db()
     m = c.execute("""SELECT m.*,u.display_name FROM maintenances m
@@ -289,52 +305,102 @@ def make_pdf(mid):
         raise ValueError("Wartung nicht gefunden")
 
     out = io.BytesIO()
-    doc = SimpleDocTemplate(out, pagesize=landscape(A4), rightMargin=8*mm,leftMargin=8*mm,topMargin=8*mm,bottomMargin=8*mm)
+    # Das Originalmuster ist ein einseitiges Hochformat-A4-Formular.
+    doc = SimpleDocTemplate(out, pagesize=A4, rightMargin=10*mm, leftMargin=10*mm,
+                            topMargin=8*mm, bottomMargin=8*mm)
     styles = getSampleStyleSheet()
-    small = ParagraphStyle("small", parent=styles["Normal"], fontSize=7, leading=8)
-    story = [
-        Paragraph("WARTUNGSPROTOKOLL – NOTRUFANLAGE", styles["Title"]),
-        Paragraph(f"<b>Haus:</b> {m['hauscode']} &nbsp;&nbsp; <b>Station:</b> {m['station']}", styles["Normal"]),
-        Paragraph(f"<b>Techniker:</b> {m['display_name']} &nbsp;&nbsp; <b>Wartungsbeginn:</b> {m['created_at']} &nbsp;&nbsp; <b>Status:</b> {m['status']}", styles["Normal"]),
-        Spacer(1, 5*mm)
-    ]
-    headers = ["Zimmer"] + [x[1] for x in CHECKS]
-    data = [headers]
-    labels = {"OK":"OK", "NOK":"NOK", "NF":"nicht ausgeführt", None:""}
-    noks=[]
-    for r in rows:
-        line=[r["room_name"]]
-        for key,label,_ in CHECKS:
-            val=r[key]
-            line.append(labels.get(val,val or ""))
-            if val=="NOK":
-                noks.append(f"Zimmer {r['room_name']} – {label}")
-        data.append(line)
-    table = Table(data, repeatRows=1, colWidths=[40*mm]+[21*mm]*len(CHECKS))
-    table.setStyle(TableStyle([
-        ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#1f2937")),
-        ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-        ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),
-        ("FONTSIZE",(0,0),(-1,-1),6),
-        ("GRID",(0,0),(-1,-1),0.3,colors.grey),
-        ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
-        ("ALIGN",(1,1),(-1,-1),"CENTER"),
-        ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white, colors.HexColor("#f3f4f6")]),
+    title = ParagraphStyle("protocol_title", parent=styles["Normal"], fontName="Helvetica-Bold",
+                           fontSize=12, leading=14, alignment=1, spaceAfter=0)
+    small = ParagraphStyle("protocol_small", parent=styles["Normal"], fontSize=6.5, leading=7.5)
+    tiny = ParagraphStyle("protocol_tiny", parent=styles["Normal"], fontSize=6, leading=6.8)
+    center = ParagraphStyle("protocol_center", parent=small, alignment=1)
+
+    # Kopfzeile wie im Muster: links Hauscode, rechts Station.
+    header = Table([
+        [Paragraph("Inspektion von Rufanlagen nach DIN VDE 0834 Ziffer 11.2", title), ""],
+        [Paragraph(f"<b>{m['hauscode']}</b>", center), Paragraph(f"<b>Station:</b> {m['station']}", center)],
+    ], colWidths=[90*mm, 90*mm], rowHeights=[10*mm, 10*mm])
+    header.setStyle(TableStyle([
+        ("SPAN", (0,0), (-1,0)),
+        ("GRID", (0,0), (-1,-1), 0.6, colors.black),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
     ]))
-    story.append(table)
-    story.append(Spacer(1,5*mm))
-    story.append(Paragraph(f"<b>Beanstandungen (NOK):</b> {len(noks)}", styles["Heading2"]))
-    for n in noks:
-        story.append(Paragraph("• " + n, small))
-    story.append(Spacer(1,5*mm))
-    story.append(Paragraph("Techniker-Unterschrift:", styles["Heading2"]))
+
+    headers = ["Raum Nr.", "Bezeichnung"] + [x[1] for x in CHECKS] + ["o.k."]
+    data = [headers]
+    noks = []
+    for idx, r in enumerate(rows, start=1):
+        line = [str(idx), r["room_name"]]
+        row_has_nok = False
+        for key, label, _ in CHECKS:
+            val = r[key]
+            if not room_applicable(r["room_name"], key):
+                line.append("")
+            else:
+                line.append("✓" if val == "OK" else ("NOK" if val == "NOK" else ("n.a." if val == "NF" else "")))
+                if val == "NOK":
+                    row_has_nok = True
+                    noks.append(f"{idx} – {r['room_name']} – {label}")
+        line.append("NOK" if row_has_nok else ("✓" if all((not room_applicable(r['room_name'], k) or r[k] == "OK") for k,_,_ in CHECKS) else ""))
+        data.append(line)
+
+    col_widths = [14*mm, 37*mm] + [11.5*mm]*len(CHECKS) + [10*mm]
+    table = Table(data, repeatRows=1, colWidths=col_widths, hAlign="CENTER")
+    ts = [
+        ("GRID", (0,0), (-1,-1), 0.45, colors.black),
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#eeeeee")),
+        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+        ("FONTSIZE", (0,0), (-1,0), 6.2),
+        ("FONTSIZE", (0,1), (-1,-1), 6.2),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+        ("ALIGN", (0,0), (-1,-1), "CENTER"),
+        ("ALIGN", (1,1), (1,-1), "LEFT"),
+        ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, colors.white]),
+    ]
+    # Graue/nicht auszuführende Felder wie im Muster.
+    for row_i, r in enumerate(rows, start=1):
+        for check_i, (key, _, _) in enumerate(CHECKS, start=2):
+            if not room_applicable(r["room_name"], key):
+                ts.append(("BACKGROUND", (check_i,row_i), (check_i,row_i), colors.HexColor("#bdbdbd")))
+    table.setStyle(TableStyle(ts))
+
+    # Legende und Unterschriftsbereich entsprechend dem Muster.
+    legend = Table([[Paragraph(
+        "ZT = Zimmerterminal, ZL = Zimmerleuchte, RT B1 = Ruftaster Bett 1, "
+        "RT B2 = Ruftaster Bett 2, RT B3 = Ruftaster Bett 3, RT = Ruftaster, "
+        "PT Bad = Pneumatischer Taster, RT Bad = Ruftaster im Bad, "
+        "ZT Bad = Zugtaster im Bad, AT Bad = Abstelltaster im Bad, o.k. = ohne Beanstandung",
+        tiny)]], colWidths=[180*mm])
+    legend.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.6,colors.black),("LEFTPADDING",(0,0),(-1,-1),2),("RIGHTPADDING",(0,0),(-1,-1),2)]))
+
+    notes = Table([
+        [Paragraph("<b>Name des Prüfers:</b>", small), Paragraph("<b>Datum und Unterschrift:</b>", small)],
+        [Paragraph("*1 mech. defekt &nbsp;&nbsp;&nbsp;&nbsp; *6 Ruf löst nicht aus &nbsp;&nbsp;&nbsp;&nbsp; *11 keine Sprechverbind.<br/>"
+                   "*2 Taste klemmt &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; *7 rote Leuchte defekt &nbsp;&nbsp;&nbsp;&nbsp; *12 ZT-Schnur fehlerhaft<br/>"
+                   "*3 AW Anzeige defekt &nbsp;&nbsp; *8 grüne Leuchte defekt<br/>"
+                   "*4 BL defekt &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; *9 weiße Leuchte defekt<br/>"
+                   "*5 Rufnachsendung &nbsp;&nbsp;&nbsp;&nbsp; *10 gelbe Leuchte defekt", tiny), ""]
+    ], colWidths=[110*mm, 70*mm], rowHeights=[7*mm, 23*mm])
+    notes.setStyle(TableStyle([
+        ("GRID",(0,0),(-1,-1),0.6,colors.black),
+        ("VALIGN",(0,0),(-1,-1),"TOP"),
+        ("LEFTPADDING",(0,0),(-1,-1),2), ("TOPPADDING",(0,0),(-1,-1),2)
+    ]))
+
+    story = [header, Spacer(1, 2*mm), table, Spacer(1, 2*mm), legend, Spacer(1, 2*mm)]
+    if noks:
+        story.append(Paragraph("<b>Beanstandungen:</b> " + " | ".join(noks), tiny))
+        story.append(Spacer(1, 1*mm))
     if m["signature"] and m["signature"].startswith("data:image"):
         try:
             raw = base64.b64decode(m["signature"].split(",",1)[1])
-            story.append(Image(io.BytesIO(raw), width=55*mm, height=20*mm))
+            sig_img = Image(io.BytesIO(raw), width=45*mm, height=15*mm)
+            notes._cellvalues[1][1] = sig_img
         except Exception:
-            story.append(Paragraph("Unterschrift konnte nicht eingebettet werden.", small))
-    story.append(Paragraph(f"Erstellt/abgeschlossen: {m['completed_at'] or ''}", small))
+            pass
+    story.append(notes)
+    story.append(Spacer(1, 2*mm))
+    story.append(Paragraph(f"Wartung begonnen: {m['created_at']} &nbsp;&nbsp;&nbsp; abgeschlossen: {m['completed_at'] or ''} &nbsp;&nbsp;&nbsp; Prüfer: {m['display_name']}", tiny))
     doc.build(story)
     out.seek(0)
     return out
