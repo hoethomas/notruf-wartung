@@ -96,6 +96,23 @@ def init_db():
         pdf_path TEXT,
         FOREIGN KEY(technician_id) REFERENCES users(id)
     );
+    CREATE TABLE IF NOT EXISTS imported_configs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        filename TEXT NOT NULL,
+        config_name TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    );
+    CREATE TABLE IF NOT EXISTS config_records (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        config_id INTEGER NOT NULL,
+        hauscode TEXT NOT NULL,
+        house_display TEXT NOT NULL,
+        stationsbezeichnung TEXT NOT NULL,
+        zimmerbezeichnung TEXT NOT NULL,
+        FOREIGN KEY(config_id) REFERENCES imported_configs(id)
+    );
     CREATE TABLE IF NOT EXISTS results (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         maintenance_id INTEGER NOT NULL,
@@ -152,69 +169,91 @@ def require_user(request):
 
 
 def load_master_data():
+    # Legacy fallback retained only for compatibility with older deployments.
     if not MASTER_DATA.exists(): return []
     try:
-        raw = json.loads(MASTER_DATA.read_text(encoding="utf-8")); clean=[]
+        raw=json.loads(MASTER_DATA.read_text(encoding="utf-8")); clean=[]
         for r in raw:
             if not r.get("hauscode") or not r.get("stationsbezeichnung") or not r.get("zimmerbezeichnung"): continue
-            clean.append({"hauscode": str(r["hauscode"]).strip(), "stationsbezeichnung": str(r["stationsbezeichnung"]).strip(), "zimmerbezeichnung": str(r["zimmerbezeichnung"]).strip()})
+            clean.append({"hauscode":str(r["hauscode"]).strip(),"house_display":str(r.get("house_display") or r["hauscode"]).strip(),"stationsbezeichnung":str(r["stationsbezeichnung"]).strip(),"zimmerbezeichnung":str(r["zimmerbezeichnung"]).strip()})
         return clean
-    except Exception:
-        return []
-
+    except Exception: return []
 
 def is_admin(request):
-    u = current_user(request)
+    u=current_user(request)
     return bool(u and u["role"] == "admin")
+
+def get_active_config_id(request):
+    cid=request.session.get("config_id")
+    if not cid: return None
+    c=db(); row=c.execute("SELECT id FROM imported_configs WHERE id=? AND user_id=?",(cid,request.session.get("user_id"))).fetchone(); c.close()
+    return row["id"] if row else None
+
+def active_records(request):
+    cid=get_active_config_id(request)
+    if not cid: return []
+    c=db(); rows=c.execute("SELECT hauscode,house_display,stationsbezeichnung,zimmerbezeichnung FROM config_records WHERE config_id=?",(cid,)).fetchall(); c.close()
+    return [dict(r) for r in rows]
+
+def active_houses(request):
+    # Preserve the exact designation extracted from the VCIP; no shortening in the UI.
+    seen={}
+    for r in active_records(request): seen[r["hauscode"]]=r["house_display"]
+    return sorted([(k,v) for k,v in seen.items()], key=lambda x:x[1].lower())
 
 def parse_vcip_bytes(data: bytes):
     with zipfile.ZipFile(io.BytesIO(data)) as z:
-        names = z.namelist()
-        xml_name = "data/data.xml" if "data/data.xml" in names else next((n for n in names if n.lower().endswith(".xml")), None)
-        if not xml_name:
-            raise ValueError("Keine XML-Daten in der VCIP-Datei gefunden.")
-        root = ET.fromstring(z.read(xml_name))
-    parents = {child: parent for parent in root.iter() for child in parent}
-    records = []
+        names=z.namelist(); xml_name="data/data.xml" if "data/data.xml" in names else next((n for n in names if n.lower().endswith(".xml")),None)
+        if not xml_name: raise ValueError("Keine XML-Daten in der VCIP-Datei gefunden.")
+        root=ET.fromstring(z.read(xml_name))
+    config_name=""
+    for n in root.iter("_logicalConfig"):
+        for x in n:
+            if x.tag=="_name" and x.text and x.text.strip(): config_name=x.text.strip(); break
+        if config_name: break
+    parents={child:parent for parent in root.iter() for child in parent}
+    by_ref={x.attrib.get("refid"):x for x in root.iter() if x.attrib.get("refid")}
+    records=[]
     for rooms_node in root.iter("_rooms"):
-        station_node = parents.get(rooms_node)
-        ward_node = parents.get(station_node) if station_node is not None else None
-        if station_node is None or ward_node is None:
-            continue
-        station_names = [x.text.strip() for x in ward_node.iter() if x.tag == "_full" and x.text and x.text.strip()]
-        station = station_names[0] if station_names else ""
-        if not station:
-            continue
-        house = station[:3].strip()
-        if not house:
-            continue
+        station_node=parents.get(rooms_node); ward_node=parents.get(station_node) if station_node is not None else None
+        if station_node is None: continue
+        station_names=[x.text.strip() for x in station_node.iter() if x.tag=="_full" and x.text and x.text.strip()]
+        station=station_names[0] if station_names else ""
+        if not station: continue
+        # In the VCIP files used here the house designation is the leading designation of the station name.
+        # Keep it exactly as present; do not truncate it in storage or display.
+        house=station.split()[0] if station.split() else station
+        if not house: continue
         for ref_node in rooms_node:
-            ref = ref_node.attrib.get("refid")
-            if not ref:
-                continue
-            room_obj = next((x for x in root.iter() if x.attrib.get("refid") == ref), None)
-            if room_obj is None:
-                continue
-            names_found = [x.text.strip() for x in room_obj.iter() if x.tag == "_full" and x.text and x.text.strip()]
+            ref=ref_node.attrib.get("refid")
+            if not ref: continue
+            room_obj=by_ref.get(ref)
+            if room_obj is None: continue
+            names_found=[x.text.strip() for x in room_obj.iter() if x.tag=="_full" and x.text and x.text.strip()]
             if names_found:
-                room = names_found[0]
-                records.append({"hauscode": house, "stationsbezeichnung": station, "zimmerbezeichnung": room})
-    # Fallback for unusual structures: pair each ward station with its room descendants.
-    unique=[]; seen=set()
+                records.append({"hauscode":house,"house_display":house,"stationsbezeichnung":station,"zimmerbezeichnung":names_found[0]})
+    unique=[];seen=set()
     for r in records:
-        key=(r["hauscode"],r["stationsbezeichnung"],r["zimmerbezeichnung"])
-        if key not in seen:
-            seen.add(key); unique.append(r)
-    if not unique:
-        raise ValueError("Die VCIP-Datei enthält keine erkennbaren Stationen/Zimmer.")
-    return unique
+        key=(r["hauscode"],r["house_display"],r["stationsbezeichnung"],r["zimmerbezeichnung"])
+        if key not in seen: seen.add(key); unique.append(r)
+    if not unique: raise ValueError("Die VCIP-Datei enthält keine erkennbaren Stationen/Zimmer.")
+    return config_name, unique
 
-def save_master_data(records):
-    MASTER_DATA.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+def save_import_for_user(request, filename, config_name, records):
+    u=current_user(request); now=datetime.now().isoformat(timespec="seconds")
+    c=db()
+    old=request.session.get("config_id")
+    if old:
+        c.execute("DELETE FROM config_records WHERE config_id=?",(old,)); c.execute("DELETE FROM imported_configs WHERE id=? AND user_id=?",(old,u["id"]))
+    cur=c.execute("INSERT INTO imported_configs(user_id,filename,config_name,created_at) VALUES(?,?,?,?)",(u["id"],filename,config_name,now)); cid=cur.lastrowid
+    c.executemany("INSERT INTO config_records(config_id,hauscode,house_display,stationsbezeichnung,zimmerbezeichnung) VALUES(?,?,?,?,?)",[(cid,r["hauscode"],r["house_display"],r["stationsbezeichnung"],r["zimmerbezeichnung"]) for r in records])
+    c.commit();c.close();request.session["config_id"]=cid
+    return cid
 
-def get_rooms(hauscode, station):
-    return sorted({r["zimmerbezeichnung"] for r in load_master_data() if r["hauscode"] == hauscode and r["stationsbezeichnung"] == station})
-
+def get_rooms(hauscode, station, request=None):
+    if request is not None:
+        return sorted({r["zimmerbezeichnung"] for r in active_records(request) if r["hauscode"]==hauscode and r["stationsbezeichnung"]==station})
+    return []
 
 def is_room_checked(row):
     return all((row[k] or "") in ("OK", "NOK", "NF") for k in CHECK_KEYS)
@@ -329,7 +368,11 @@ def make_pdf(mid):
 def import_page(request: Request):
     u=current_user(request)
     if not u: return RedirectResponse("/login",303)
-    return TEMPLATES.TemplateResponse("import.html", {"request":request,"user":u})
+    c=db(); cfg=None
+    cid=get_active_config_id(request)
+    if cid: cfg=c.execute("SELECT * FROM imported_configs WHERE id=?",(cid,)).fetchone()
+    c.close()
+    return TEMPLATES.TemplateResponse("import.html", {"request":request,"user":u,"config":cfg,"record_count":len(active_records(request))})
 
 @app.post("/import/vcip-file")
 async def import_vcip_file(request: Request, file_upload: UploadFile = File(...)):
@@ -337,11 +380,8 @@ async def import_vcip_file(request: Request, file_upload: UploadFile = File(...)
     if not u: return RedirectResponse("/login",303)
     data=await file_upload.read()
     try:
-        records=parse_vcip_bytes(data)
-        existing=load_master_data()
-        houses={r["hauscode"] for r in records}
-        merged=[r for r in existing if r["hauscode"] not in houses] + records
-        save_master_data(merged)
+        config_name,records=parse_vcip_bytes(data)
+        save_import_for_user(request,file_upload.filename or "config.vcip",config_name,records)
         return RedirectResponse(f"/import?success={len(records)}",303)
     except Exception as e:
         return RedirectResponse("/import?error="+str(e).replace(" ","+"),303)
@@ -377,17 +417,17 @@ def users_delete(request: Request, uid:int):
 @app.get("/api/houses")
 def api_houses(request: Request):
     if not require_user(request): return {"error":"unauthorized"}
-    return sorted({r["hauscode"] for r in load_master_data()})
+    return [{"code":code,"label":label} for code,label in active_houses(request)]
 
 @app.get("/api/stations/{hauscode}")
 def api_stations(request: Request, hauscode: str):
     if not require_user(request): return {"error":"unauthorized"}
-    return sorted({r["stationsbezeichnung"] for r in load_master_data() if r["hauscode"]==hauscode})
+    return sorted({r["stationsbezeichnung"] for r in active_records(request) if r["hauscode"]==hauscode})
 
 @app.get("/api/rooms/{hauscode}/{station}")
 def api_rooms(request: Request, hauscode: str, station: str):
     if not require_user(request): return {"error":"unauthorized"}
-    return get_rooms(hauscode,station)
+    return get_rooms(hauscode,station,request)
 
 @app.get("/",response_class=HTMLResponse)
 def home(request: Request):
@@ -399,7 +439,8 @@ def home(request: Request):
         SUM(CASE WHEN res.zt='NOK' OR res.zl='NOK' OR res.rt_b1='NOK' OR res.rt_b2='NOK' OR res.rt_b3='NOK' OR res.rt='NOK' OR res.rt_bad='NOK' OR res.pt_bad='NOK' OR res.zt_bad='NOK' OR res.at_bad='NOK' THEN 1 ELSE 0 END) AS nok_rooms
         FROM maintenances m JOIN users u ON u.id=m.technician_id LEFT JOIN results res ON res.maintenance_id=m.id
         GROUP BY m.id ORDER BY m.id DESC LIMIT 30""").fetchall(); c.close()
-    return TEMPLATES.TemplateResponse("dashboard.html",{"request":request,"user":u,"maintenances":maint,"houses":sorted({r["hauscode"] for r in load_master_data()}),"house_count":len({r["hauscode"] for r in load_master_data()}),"is_admin":u["role"]=="admin"})
+    houses=active_houses(request)
+    return TEMPLATES.TemplateResponse("dashboard.html",{"request":request,"user":u,"maintenances":maint,"houses":houses,"house_count":len(houses),"is_admin":u["role"]=="admin","has_config":bool(get_active_config_id(request))})
 
 @app.get("/login",response_class=HTMLResponse)
 def login_page(request: Request): return TEMPLATES.TemplateResponse("login.html",{"request":request})
@@ -408,7 +449,7 @@ def login_page(request: Request): return TEMPLATES.TemplateResponse("login.html"
 def login(request: Request,username:str=Form(...),password:str=Form(...)):
     c=db();u=c.execute("SELECT * FROM users WHERE username=?",(username.strip(),)).fetchone();c.close()
     if not u or not verify_password(password,u["password_hash"]): return TEMPLATES.TemplateResponse("login.html",{"request":request,"error":"Benutzername oder Passwort falsch."})
-    request.session["user_id"]=u["id"];return RedirectResponse("/",303)
+    request.session.clear(); request.session["user_id"]=u["id"]; return RedirectResponse("/",303)
 
 @app.get("/logout")
 def logout(request: Request): request.session.clear();return RedirectResponse("/login",303)
@@ -416,7 +457,8 @@ def logout(request: Request): request.session.clear();return RedirectResponse("/
 @app.post("/maintenance/start")
 def maintenance_start(request: Request,hauscode:str=Form(...),station:str=Form(...),inspection_year:int=Form(...)):
     if not require_user(request):return RedirectResponse("/login",303)
-    rooms=get_rooms(hauscode.strip(),station.strip())
+    if not get_active_config_id(request): return RedirectResponse("/import?error=Bitte+zuerst+eine+VCIP-Datei+hochladen",303)
+    rooms=get_rooms(hauscode.strip(),station.strip(),request)
     if not rooms:return RedirectResponse("/?error=Keine+Zimmer+gefunden",303)
     c=db(); now=datetime.now().isoformat(timespec="seconds"); u=current_user(request)
     cur=c.execute("INSERT INTO maintenances(hauscode,station,technician_id,inspector_name,inspection_year,created_at) VALUES(?,?,?,?,?,?)",(hauscode.strip(),station.strip(),u["id"],u["display_name"],inspection_year,now));mid=cur.lastrowid
