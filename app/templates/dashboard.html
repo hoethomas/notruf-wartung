@@ -1,11 +1,55 @@
 {% extends "base.html" %}{% block content %}
-<div class="actions" style="justify-content:space-between"><h1>Übersicht</h1><a class="btn" href="/facility/new">+ Neue Anlage</a></div>
-<div class="card"><h2>Anlagen</h2>
-<table><tr><th>Anlagennummer</th><th>Haus</th><th>Wartungen</th><th></th></tr>
-{% for f in facilities %}<tr><td>{{f.number}}</td><td>{{f.house_name}}</td><td>{{f.maintenance_count}}</td><td><a class="btn secondary" href="/facility/{{f.id}}">Öffnen</a></td></tr>{% else %}<tr><td colspan="4">Noch keine Anlagen vorhanden.</td></tr>{% endfor %}
-</table></div>
+<div class="actions" style="justify-content:space-between"><div><h1>Wartungen</h1><p class="mini">Stammdaten: {{ house_count }} Häuser · Haus → Station → Zimmer</p></div></div>
+
+<div class="card">
+<h2>Neue Wartung</h2>
+<p class="mini">Haus auswählen → passende Station auswählen → die hinterlegten Zimmer werden automatisch übernommen.</p>
+<form method="post" action="/maintenance/start" id="startForm">
+<div class="grid">
+<label>Haus
+<select id="house" name="hauscode" onchange="loadStations()" required><option value="">Bitte auswählen...</option></select>
+</label>
+<label>Station
+<select id="station" name="station" onchange="loadRooms()" disabled required><option value="">Bitte zuerst Haus wählen...</option></select>
+</label>
+</div>
+<div id="roomInfo" class="card" style="display:none;margin-top:16px;background:#f8fafc"></div>
+<p><button id="startBtn" class="btn success" type="submit" disabled>Wartung für diese Station starten</button></p>
+</form>
+</div>
+
 <div class="card"><h2>Letzte Wartungen</h2>
-<table><tr><th>Anlage</th><th>Haus</th><th>Techniker</th><th>Status</th><th></th></tr>
-{% for m in maintenances %}<tr><td>{{m.number}}</td><td>{{m.house_name}}</td><td>{{m.display_name}}</td><td><span class="status {% if m.status=='completed' %}ok{% else %}nf{% endif %}">{{m.status}}</span></td><td><a href="/maintenance/{{m.id}}">Öffnen</a></td></tr>{% else %}<tr><td colspan="5">Noch keine Wartungen.</td></tr>{% endfor %}
+<table><tr><th>Datum</th><th>Haus</th><th>Station</th><th>Techniker</th><th>Zimmer</th><th>NOK</th><th>Status</th><th></th></tr>
+{% for m in maintenances %}<tr>
+<td>{{m.created_at}}</td><td><b>{{m.hauscode}}</b></td><td>{{m.station}}</td><td>{{m.display_name}}</td><td>{{m.room_count}}</td><td>{{m.nok_rooms or 0}}</td>
+<td><span class="status {% if m.status=='completed' %}ok{% else %}nf{% endif %}">{{"abgeschlossen" if m.status=="completed" else "offen"}}</span></td>
+<td><a class="btn secondary" href="/maintenance/{{m.id}}">Öffnen</a></td></tr>
+{% else %}<tr><td colspan="8">Noch keine Wartungen.</td></tr>{% endfor %}
 </table></div>
+
+<script>
+async function loadHouses(){
+ const s=document.getElementById('house');
+ const data=await fetch('/api/houses').then(r=>r.json());
+ data.forEach(h=>{let o=document.createElement('option');o.value=h;o.textContent=h;s.appendChild(o)})
+}
+async function loadStations(){
+ const h=document.getElementById('house').value, s=document.getElementById('station');
+ s.innerHTML='<option value="">Bitte auswählen...</option>'; s.disabled=!h;
+ document.getElementById('startBtn').disabled=true; document.getElementById('roomInfo').style.display='none';
+ if(!h)return;
+ const data=await fetch('/api/stations/'+encodeURIComponent(h)).then(r=>r.json());
+ data.forEach(v=>{let o=document.createElement('option');o.value=v;o.textContent=v;s.appendChild(o)})
+}
+async function loadRooms(){
+ const h=document.getElementById('house').value, s=document.getElementById('station').value;
+ const box=document.getElementById('roomInfo'), btn=document.getElementById('startBtn');
+ btn.disabled=!s; if(!s){box.style.display='none';return}
+ const rooms=await fetch('/api/rooms/'+encodeURIComponent(h)+'/'+encodeURIComponent(s)).then(r=>r.json());
+ box.style.display='block';
+ box.innerHTML='<b>'+rooms.length+' Zimmer hinterlegt</b><br><span class="mini">'+rooms.slice(0,15).join(', ')+(rooms.length>15?' …':'')+'</span>';
+ if(!rooms.length) btn.disabled=true;
+}
+loadHouses();
+</script>
 {% endblock %}

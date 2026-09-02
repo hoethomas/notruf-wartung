@@ -1,15 +1,15 @@
 {% extends "base.html" %}{% block content %}
-<div class="actions"><a href="/facility/{{m.facility_id}}" class="btn secondary">← Anlage</a><a class="btn" href="/maintenance/{{m.id}}/pdf" target="_blank">PDF anzeigen</a></div>
-<div class="card"><h1>Wartung {{m.number}}</h1><p><b>Haus:</b> {{m.house_name}} · <b>Techniker:</b> {{m.display_name}} · <b>Status:</b> {{m.status}}</p></div>
+<div class="actions"><a href="/" class="btn secondary">← Übersicht</a><a class="btn" href="/maintenance/{{m.id}}/pdf" target="_blank">PDF anzeigen</a></div>
+<div class="card"><h1>Wartung</h1><p><b>Haus:</b> {{m.hauscode}} · <b>Station:</b> {{m.station}} · <b>Techniker:</b> {{m.display_name}} · <b>Status:</b> {{"abgeschlossen" if m.status=="completed" else "offen"}}</p></div>
 <form method="post" action="/maintenance/{{m.id}}/save">
-<div class="card scroll"><table><tr><th>Station</th><th>Zimmer</th>{% for c in checks %}<th>{{c[1]}}</th>{% endfor %}</tr>
-{% for r in rows %}<tr><td>{{r.station_name}}</td><td><b>{{r.room_name}}</b></td>
+<div class="card scroll"><table><tr><th>Zimmer</th>{% for c in checks %}<th>{{c[1]}}</th>{% endfor %}</tr>
+{% for r in rows %}<tr><td><b>{{r.room_name}}</b></td>
 {% for key,label,options in checks %}<td><div class="check">
 {% for opt in options %}<label><input type="radio" name="{{key}}_{{r.id}}" value="{{opt}}" {% if r[key]==opt %}checked{% endif %}>{{"nicht ausgeführt" if opt=="NF" else opt}}</label>{% endfor %}
 </div></td>{% endfor %}</tr>{% endfor %}
 </table></div><button class="btn" type="submit">Zwischenspeichern</button></form>
 
-<div class="card"><h2>Wartung abschließen</h2><p class="mini">Unterschrift mit Maus, Stift oder Finger.</p>
+<div class="card"><h2>Wartung abschließen</h2><p class="mini">Unterschrift direkt mit Maus, Stift oder Finger.</p>
 <canvas id="sig" class="signature" width="700" height="220"></canvas>
 <form method="post" action="/maintenance/{{m.id}}/complete" onsubmit="return saveSig()">
 <input type="hidden" id="signature" name="signature">
@@ -17,7 +17,7 @@
 <button type="button" class="btn secondary" onclick="clearSig()">Unterschrift löschen</button>
 </form></div>
 <script>
-const c=document.getElementById('sig'),x=c.getContext('2d'); x.lineWidth=2;
+const c=document.getElementById('sig'),x=c.getContext('2d'); x.lineWidth=2; x.lineCap='round';
 let down=false,last=null;
 function pos(e){const r=c.getBoundingClientRect(); const t=e.touches?e.touches[0]:e; return {x:(t.clientX-r.left)*c.width/r.width,y:(t.clientY-r.top)*c.height/r.height}}
 function start(e){down=true;last=pos(e);e.preventDefault()}
