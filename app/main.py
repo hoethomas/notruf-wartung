@@ -5,10 +5,8 @@ import io
 import json
 import os
 import secrets
-import smtplib
 import sqlite3
 from datetime import datetime
-from email.message import EmailMessage
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Form
@@ -204,7 +202,14 @@ def make_pdf(mid):
         except Exception: details={}
         for key,label,_ in CHECKS:
             val=r[key]
-            line.append("✓" if val=="OK" else ("NOK" if val=="NOK" else ("n.a." if val=="NF" else "")))
+            if val == "OK":
+                line.append(Paragraph("<font color='#16a34a'><b>✓</b></font>", center))
+            elif val == "NOK":
+                line.append(Paragraph("<font color='#dc2626'><b>!</b></font>", center))
+            elif val == "NF":
+                line.append(Paragraph("<font color='#64748b'><b>—</b></font>", center))
+            else:
+                line.append(Paragraph("", center))
             if val=="NOK": noks.append((r["room_name"],label,details.get(key,"")))
         data.append(line)
     widths=[46*mm]+[15.2*mm]*len(CHECKS)
@@ -239,24 +244,6 @@ def make_pdf(mid):
     notes.setStyle(TableStyle([("GRID",(0,0),(-1,-1),0.6,colors.black),("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),3)])); story.append(notes)
     doc.build(story); out.seek(0); return out
 
-
-def send_email(pdf_bytes, filename, recipient, mid):
-    host=os.environ.get("SMTP_HOST"); user=os.environ.get("SMTP_USER"); password=os.environ.get("SMTP_PASSWORD")
-    if not host: raise RuntimeError("E-Mail-Versand ist noch nicht konfiguriert (SMTP_HOST fehlt).")
-    port=int(os.environ.get("SMTP_PORT","587")); sender=os.environ.get("SMTP_FROM",user or "")
-    if not sender: raise RuntimeError("SMTP_FROM fehlt.")
-    msg=EmailMessage(); msg["Subject"]=f"Zusammenfassung der Rufanlagenwartung – {mid}"; msg["From"]=sender; msg["To"]=recipient
-    msg.set_content("Im Anhang finden Sie die Zusammenfassung der Rufanlagenwartung.")
-    msg.add_attachment(pdf_bytes,maintype="application",subtype="pdf",filename=filename)
-    if os.environ.get("SMTP_TLS","1") != "0":
-        with smtplib.SMTP(host,port,timeout=20) as s:
-            s.starttls();
-            if user: s.login(user,password or "")
-            s.send_message(msg)
-    else:
-        with smtplib.SMTP(host,port,timeout=20) as s:
-            if user: s.login(user,password or "")
-            s.send_message(msg)
 
 
 @app.get("/api/houses")
@@ -335,22 +322,16 @@ def add_room(request:Request,mid:int,room_name:str=Form(...)):
 @app.post("/maintenance/{mid}/complete")
 async def maintenance_complete(request:Request,mid:int):
     if not require_user(request):return RedirectResponse("/login",303)
-    form=await request.form();sig=(form.get("signature") or "").strip();inspector=(form.get("inspector_name") or "").strip();year=form.get("inspection_year") or None;email=(form.get("email_address") or "").strip()
+    form=await request.form();sig=(form.get("signature") or "").strip();inspector=(form.get("inspector_name") or "").strip();year=form.get("inspection_year") or None
     if not sig or not sig.startswith("data:image"):
         return RedirectResponse(f"/maintenance/{mid}?error=Bitte+Unterschrift+setzen",303)
     c=db();exists=c.execute("SELECT id FROM maintenances WHERE id=?",(mid,)).fetchone()
     if not exists:c.close();return RedirectResponse("/",303)
     save_results_from_form(c,mid,form)
     completed=datetime.now().isoformat(timespec="seconds")
-    c.execute("UPDATE maintenances SET inspector_name=?,inspection_year=?,email_address=?,status='completed',completed_at=?,signature=?,email_sent_at=NULL,email_error=NULL WHERE id=?",(inspector,year,email,completed,sig,mid));c.commit();c.close()
+    c.execute("UPDATE maintenances SET inspector_name=?,inspection_year=?,status='completed',completed_at=?,signature=? WHERE id=?",(inspector,year,completed,sig,mid));c.commit();c.close()
     pdf=make_pdf(mid);pdf_bytes=pdf.getvalue();filename=f"Zusammenfassung_Rufanlagenwartung_{mid}.pdf";path=PROTOCOL_DIR/filename;path.write_bytes(pdf_bytes)
     c=db();c.execute("UPDATE maintenances SET pdf_path=? WHERE id=?",(str(path),mid));c.commit();c.close()
-    if email:
-        try:
-            send_email(pdf_bytes,filename,email,mid)
-            c=db();c.execute("UPDATE maintenances SET email_sent_at=? WHERE id=?",(datetime.now().isoformat(timespec="seconds"),mid));c.commit();c.close()
-        except Exception as e:
-            c=db();c.execute("UPDATE maintenances SET email_error=? WHERE id=?",(str(e)[:500],mid));c.commit();c.close()
     return RedirectResponse(f"/maintenance/{mid}/completed",303)
 
 @app.get("/maintenance/{mid}/completed",response_class=HTMLResponse)
