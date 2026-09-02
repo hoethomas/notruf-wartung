@@ -9,7 +9,9 @@ from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
-from passlib.hash import bcrypt
+import hashlib
+import hmac
+import secrets
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -34,6 +36,21 @@ CHECKS = [
     ("zt_bad", "ZT Bad", ["OK", "NOK", "NF"]),
     ("at_bad", "AT Bad", ["OK", "NOK", "NF"]),
 ]
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 300_000)
+    return salt.hex() + ":" + digest.hex()
+
+def verify_password(password: str, stored: str) -> bool:
+    try:
+        salt_hex, digest_hex = stored.split(":", 1)
+        salt = bytes.fromhex(salt_hex)
+        expected = bytes.fromhex(digest_hex)
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 300_000)
+        return hmac.compare_digest(actual, expected)
+    except Exception:
+        return False
 
 def db():
     conn = sqlite3.connect(DB)
@@ -91,7 +108,7 @@ def init_db():
     user = c.execute("SELECT id FROM users LIMIT 1").fetchone()
     if not user:
         c.execute("INSERT INTO users(username,password_hash,display_name) VALUES(?,?,?)",
-                  ("admin", bcrypt.hash("admin123"), "Administrator"))
+                  ("admin", hash_password("admin123"), "Administrator"))
     c.commit()
     c.close()
 
@@ -138,7 +155,7 @@ def login(request: Request, username: str = Form(...), password: str = Form(...)
     c = db()
     u = c.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
     c.close()
-    if not u or not bcrypt.verify(password, u["password_hash"]):
+    if not u or not verify_password(password, u["password_hash"]):
         return TEMPLATES.TemplateResponse("login.html", {"request": request, "error": "Benutzername oder Passwort falsch."})
     request.session["user_id"] = u["id"]
     return RedirectResponse("/", 303)
