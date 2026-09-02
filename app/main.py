@@ -6,10 +6,12 @@ import json
 import os
 import secrets
 import sqlite3
+import zipfile
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request, Form, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -74,7 +76,8 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
-        display_name TEXT NOT NULL
+        display_name TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'technician'
     );
     CREATE TABLE IF NOT EXISTS maintenances (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -108,6 +111,7 @@ def init_db():
         cols = {row[1] for row in c.execute(f"PRAGMA table_info({table})").fetchall()}
         if col not in cols:
             c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {definition}")
+    add_col("users", "role", "TEXT NOT NULL DEFAULT 'technician'")
     for col, definition in [
         ("inspector_name", "TEXT"), ("inspection_year", "INTEGER"), ("email_address", "TEXT"),
         ("email_sent_at", "TEXT"), ("email_error", "TEXT"), ("pdf_path", "TEXT")]:
@@ -117,8 +121,18 @@ def init_db():
     add_col("results", "issue_details", "TEXT")
     user = c.execute("SELECT id FROM users LIMIT 1").fetchone()
     if not user:
-        c.execute("INSERT INTO users(username,password_hash,display_name) VALUES(?,?,?)",
-                  ("admin", hash_password("admin123"), "Administrator"))
+        c.execute("INSERT INTO users(username,password_hash,display_name,role) VALUES(?,?,?,?)",
+                  ("admin", hash_password("admin123"), "Administrator", "admin"))
+    # Standard-Technikerkonten für den ersten Einsatz/Test anlegen, falls sie noch nicht existieren.
+    for username, password, display_name in [
+        ("Test1", "1234", "Test1"),
+        ("Test2", "1234", "Test2"),
+        ("Test3", "1234", "Test3"),
+    ]:
+        exists = c.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
+        if not exists:
+            c.execute("INSERT INTO users(username,password_hash,display_name,role) VALUES(?,?,?,?)",
+                      (username, hash_password(password), display_name, "technician"))
     c.commit(); c.close()
 
 
@@ -148,6 +162,55 @@ def load_master_data():
     except Exception:
         return []
 
+
+def is_admin(request):
+    u = current_user(request)
+    return bool(u and u["role"] == "admin")
+
+def parse_vcip_bytes(data: bytes):
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        names = z.namelist()
+        xml_name = "data/data.xml" if "data/data.xml" in names else next((n for n in names if n.lower().endswith(".xml")), None)
+        if not xml_name:
+            raise ValueError("Keine XML-Daten in der VCIP-Datei gefunden.")
+        root = ET.fromstring(z.read(xml_name))
+    parents = {child: parent for parent in root.iter() for child in parent}
+    records = []
+    for rooms_node in root.iter("_rooms"):
+        station_node = parents.get(rooms_node)
+        ward_node = parents.get(station_node) if station_node is not None else None
+        if station_node is None or ward_node is None:
+            continue
+        station_names = [x.text.strip() for x in ward_node.iter() if x.tag == "_full" and x.text and x.text.strip()]
+        station = station_names[0] if station_names else ""
+        if not station:
+            continue
+        house = station[:3].strip()
+        if not house:
+            continue
+        for ref_node in rooms_node:
+            ref = ref_node.attrib.get("refid")
+            if not ref:
+                continue
+            room_obj = next((x for x in root.iter() if x.attrib.get("refid") == ref), None)
+            if room_obj is None:
+                continue
+            names_found = [x.text.strip() for x in room_obj.iter() if x.tag == "_full" and x.text and x.text.strip()]
+            if names_found:
+                room = names_found[0]
+                records.append({"hauscode": house, "stationsbezeichnung": station, "zimmerbezeichnung": room})
+    # Fallback for unusual structures: pair each ward station with its room descendants.
+    unique=[]; seen=set()
+    for r in records:
+        key=(r["hauscode"],r["stationsbezeichnung"],r["zimmerbezeichnung"])
+        if key not in seen:
+            seen.add(key); unique.append(r)
+    if not unique:
+        raise ValueError("Die VCIP-Datei enthält keine erkennbaren Stationen/Zimmer.")
+    return unique
+
+def save_master_data(records):
+    MASTER_DATA.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
 
 def get_rooms(hauscode, station):
     return sorted({r["zimmerbezeichnung"] for r in load_master_data() if r["hauscode"] == hauscode and r["stationsbezeichnung"] == station})
@@ -231,7 +294,7 @@ def make_pdf(mid):
     legend_cells=[
         [Paragraph("<font color='#16a34a'><b>✓</b></font>", ParagraphStyle("lgok", parent=center, fontSize=11, leading=11)), Paragraph("<b>OK</b> – Prüfung in Ordnung", small)],
         [Paragraph("<font color='#dc2626'><b>!</b></font>", ParagraphStyle("lgnok", parent=center, fontSize=11, leading=11)), Paragraph("<b>NOK</b> – Mangel festgestellt", small)],
-        [Paragraph("<font color='#64748b'><b>—</b></font>", ParagraphStyle("lgnf", parent=center, fontSize=11, leading=11)), Paragraph("<b>nicht ausgeführt</b> – Prüfung nicht durchgeführt", small)],
+        [Paragraph("<font color='#64748b'><b>—</b></font>", ParagraphStyle("lgnf", parent=center, fontSize=11, leading=11)), Paragraph("<b>nicht ausgeführt</b>", small)],
     ]
     legend_table=Table(legend_cells, colWidths=[12*mm,186*mm])
     legend_table.setStyle(TableStyle([
@@ -262,6 +325,55 @@ def make_pdf(mid):
 
 
 
+@app.get("/import", response_class=HTMLResponse)
+def import_page(request: Request):
+    u=current_user(request)
+    if not u: return RedirectResponse("/login",303)
+    return TEMPLATES.TemplateResponse("import.html", {"request":request,"user":u})
+
+@app.post("/import/vcip-file")
+async def import_vcip_file(request: Request, file_upload: UploadFile = File(...)):
+    u=current_user(request)
+    if not u: return RedirectResponse("/login",303)
+    data=await file_upload.read()
+    try:
+        records=parse_vcip_bytes(data)
+        existing=load_master_data()
+        houses={r["hauscode"] for r in records}
+        merged=[r for r in existing if r["hauscode"] not in houses] + records
+        save_master_data(merged)
+        return RedirectResponse(f"/import?success={len(records)}",303)
+    except Exception as e:
+        return RedirectResponse("/import?error="+str(e).replace(" ","+"),303)
+
+@app.get("/users", response_class=HTMLResponse)
+def users_page(request: Request):
+    u=current_user(request)
+    if not u: return RedirectResponse("/login",303)
+    if u["role"] != "admin": return RedirectResponse("/",303)
+    c=db(); users=c.execute("SELECT id,username,display_name,role FROM users ORDER BY username").fetchall(); c.close()
+    return TEMPLATES.TemplateResponse("users.html", {"request":request,"user":u,"users":users})
+
+@app.post("/users/create")
+def users_create(request: Request, username:str=Form(...), display_name:str=Form(...), password:str=Form(...), role:str=Form("technician")):
+    u=current_user(request)
+    if not u or u["role"] != "admin": return RedirectResponse("/",303)
+    username=username.strip(); display_name=display_name.strip(); role=role if role in ("admin","technician") else "technician"
+    if not username or not display_name or not password: return RedirectResponse("/users?error=Bitte+alle+Felder+ausfüllen",303)
+    c=db()
+    try:
+        c.execute("INSERT INTO users(username,password_hash,display_name,role) VALUES(?,?,?,?)",(username,hash_password(password),display_name,role)); c.commit()
+    except sqlite3.IntegrityError:
+        c.close(); return RedirectResponse("/users?error=Benutzername+bereits+vorhanden",303)
+    c.close(); return RedirectResponse("/users?success=Benutzer+angelegt",303)
+
+@app.post("/users/{uid}/delete")
+def users_delete(request: Request, uid:int):
+    u=current_user(request)
+    if not u or u["role"] != "admin": return RedirectResponse("/",303)
+    if uid == u["id"]: return RedirectResponse("/users?error=Eigener+Benutzer+kann+nicht+gelöscht+werden",303)
+    c=db(); c.execute("DELETE FROM users WHERE id=?",(uid,)); c.commit(); c.close(); return RedirectResponse("/users?success=Benutzer+gelöscht",303)
+
 @app.get("/api/houses")
 def api_houses(request: Request):
     if not require_user(request): return {"error":"unauthorized"}
@@ -287,7 +399,7 @@ def home(request: Request):
         SUM(CASE WHEN res.zt='NOK' OR res.zl='NOK' OR res.rt_b1='NOK' OR res.rt_b2='NOK' OR res.rt_b3='NOK' OR res.rt='NOK' OR res.rt_bad='NOK' OR res.pt_bad='NOK' OR res.zt_bad='NOK' OR res.at_bad='NOK' THEN 1 ELSE 0 END) AS nok_rooms
         FROM maintenances m JOIN users u ON u.id=m.technician_id LEFT JOIN results res ON res.maintenance_id=m.id
         GROUP BY m.id ORDER BY m.id DESC LIMIT 30""").fetchall(); c.close()
-    return TEMPLATES.TemplateResponse("dashboard.html",{"request":request,"user":u,"maintenances":maint,"houses":sorted({r["hauscode"] for r in load_master_data()}),"house_count":len({r["hauscode"] for r in load_master_data()})})
+    return TEMPLATES.TemplateResponse("dashboard.html",{"request":request,"user":u,"maintenances":maint,"houses":sorted({r["hauscode"] for r in load_master_data()}),"house_count":len({r["hauscode"] for r in load_master_data()}),"is_admin":u["role"]=="admin"})
 
 @app.get("/login",response_class=HTMLResponse)
 def login_page(request: Request): return TEMPLATES.TemplateResponse("login.html",{"request":request})
