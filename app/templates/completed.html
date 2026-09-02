@@ -1,0 +1,4 @@
+{% extends "base.html" %}{% block content %}
+<div class="card"><h1>Wartung abgeschlossen</h1><p>Die Wartung wurde gespeichert.</p><p><b>Haus:</b> {{m.hauscode}} · <b>Station:</b> {{m.station}} · <b>Prüfer:</b> {{m.inspector_name}} · <b>Jahr:</b> {{m.inspection_year}}</p><p><b>Abschlussdatum:</b> {{m.completed_at}}</p>
+{% if m.email_sent_at %}<p class="success-text">PDF wurde erfolgreich an {{m.email_address}} gesendet.</p>{% elif m.email_error %}<p class="error-text">Das PDF wurde gespeichert, konnte aber nicht per E-Mail versendet werden: {{m.email_error}}</p>{% elif m.email_address %}<p class="error-text">Das PDF wurde gespeichert. Der E-Mail-Versand konnte nicht durchgeführt werden.</p>{% endif %}
+<div class="actions"><a class="btn" href="/maintenance/{{m.id}}/pdf" target="_blank">PDF öffnen</a><a class="btn secondary" href="/">Zur Übersicht</a></div></div>{% endblock %}
