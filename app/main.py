@@ -184,6 +184,7 @@ def home(request: Request):
     c.close()
     return TEMPLATES.TemplateResponse("dashboard.html", {
         "request": request, "user": u, "maintenances": maint,
+        "houses": sorted({r["hauscode"] for r in load_master_data()}),
         "house_count": len({r["hauscode"] for r in load_master_data()}),
     })
 
