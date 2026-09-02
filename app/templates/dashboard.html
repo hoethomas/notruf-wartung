@@ -7,7 +7,10 @@
 <form method="post" action="/maintenance/start" id="startForm">
 <div class="grid">
 <label>Haus
-<select id="house" name="hauscode" onchange="loadStations()" required><option value="">Bitte auswählen...</option></select>
+<select id="house" name="hauscode" onchange="loadStations()" required>
+<option value="">Bitte auswählen...</option>
+{% for h in houses %}<option value="{{ h }}">{{ h }}</option>{% endfor %}
+</select>
 </label>
 <label>Station
 <select id="station" name="station" onchange="loadRooms()" disabled required><option value="">Bitte zuerst Haus wählen...</option></select>
@@ -38,18 +41,25 @@ async function loadStations(){
  s.innerHTML='<option value="">Bitte auswählen...</option>'; s.disabled=!h;
  document.getElementById('startBtn').disabled=true; document.getElementById('roomInfo').style.display='none';
  if(!h)return;
- const data=await fetch('/api/stations/'+encodeURIComponent(h)).then(r=>r.json());
+ const response=await fetch('/api/stations/'+encodeURIComponent(h));
+ if(!response.ok){ alert('Stationen konnten nicht geladen werden.'); return; }
+ const data=await response.json();
+ if(data.error){ alert('Sitzung abgelaufen. Bitte neu anmelden.'); window.location='/login'; return; }
  data.forEach(v=>{let o=document.createElement('option');o.value=v;o.textContent=v;s.appendChild(o)})
 }
 async function loadRooms(){
  const h=document.getElementById('house').value, s=document.getElementById('station').value;
  const box=document.getElementById('roomInfo'), btn=document.getElementById('startBtn');
  btn.disabled=!s; if(!s){box.style.display='none';return}
- const rooms=await fetch('/api/rooms/'+encodeURIComponent(h)+'/'+encodeURIComponent(s)).then(r=>r.json());
+ const response=await fetch('/api/rooms/'+encodeURIComponent(h)+'/'+encodeURIComponent(s));
+ if(!response.ok){ alert('Zimmer konnten nicht geladen werden.'); return; }
+ const rooms=await response.json();
+ if(rooms.error){ alert('Sitzung abgelaufen. Bitte neu anmelden.'); window.location='/login'; return; }
  box.style.display='block';
  box.innerHTML='<b>'+rooms.length+' Zimmer hinterlegt</b><br><span class="mini">'+rooms.slice(0,15).join(', ')+(rooms.length>15?' …':'')+'</span>';
  if(!rooms.length) btn.disabled=true;
 }
-loadHouses();
+// Hausliste wird serverseitig gerendert. Dadurch ist sie auch bei einem verzögerten
+// API-Aufruf sofort vorhanden. Stationen und Zimmer werden abhängig vom Haus geladen.
 </script>
 {% endblock %}
