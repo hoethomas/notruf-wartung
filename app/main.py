@@ -169,15 +169,16 @@ def init_db():
         c.execute("INSERT INTO users(username,password_hash,display_name,role) VALUES(?,?,?,?)",
                   ("admin", hash_password("admin123"), "Administrator", "admin"))
     # Standard-Technikerkonten für den ersten Einsatz/Test anlegen, falls sie noch nicht existieren.
-    for username, password, display_name in [
-        ("Test1", "1234", "Test1"),
-        ("Test2", "1234", "Test2"),
-        ("Test3", "1234", "Test3"),
+    for username, password, display_name, role in [
+        ("Test1", "1234", "Test1", "technician"),
+        ("Test2", "1234", "Test2", "technician"),
+        ("Test3", "1234", "Test3", "technician"),
+        ("Thomas", "sho:qu7o", "Thomas", "admin"),
     ]:
         exists = c.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
         if not exists:
             c.execute("INSERT INTO users(username,password_hash,display_name,role) VALUES(?,?,?,?)",
-                      (username, hash_password(password), display_name, "technician"))
+                      (username, hash_password(password), display_name, role))
     c.commit(); c.close()
 
 
