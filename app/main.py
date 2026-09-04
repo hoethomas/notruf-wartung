@@ -604,7 +604,7 @@ def make_pdf(mid):
     ]
     legend_table=Table(legend_cells, colWidths=[12*mm,76*mm], hAlign="CENTER")
     legend_table.setStyle(TableStyle([
-        ("BOX",(0,0),(-1,-1),0.6,colors.black),("INNERGRID",(0,0),(-1,-1),0.3,colors.black),
+        ("LINEBELOW",(0,0),(-1,1),0.3,colors.black),("LINEAFTER",(0,0),(0,-1),0.3,colors.black),
         ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ALIGN",(0,0),(0,-1),"CENTER"),
         ("BACKGROUND",(0,0),(0,0),colors.HexColor("#dcfce7")),("BACKGROUND",(0,1),(0,1),colors.HexColor("#fee2e2")),("BACKGROUND",(0,2),(0,2),colors.HexColor("#e2e8f0")),
         ("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),2.5),("BOTTOMPADDING",(0,0),(-1,-1),2.5)
@@ -624,15 +624,15 @@ def make_pdf(mid):
     ]
     abbrev_table=Table(abbrev_cells, colWidths=[25*mm,63*mm], hAlign="CENTER")
     abbrev_table.setStyle(TableStyle([
-        ("BOX",(0,0),(-1,-1),0.6,colors.black),("INNERGRID",(0,0),(-1,-1),0.3,colors.black),
+        ("LINEBELOW",(0,0),(-1,-2),0.3,colors.black),("LINEAFTER",(0,0),(0,-1),0.3,colors.black),
         ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
         ("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),2),("BOTTOMPADDING",(0,0),(-1,-1),2)
     ]))
     legend_left=Table([[legend_title],[legend_table]],colWidths=[94*mm])
-    legend_left.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.6,colors.black),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eeeeee")),("LEFTPADDING",(0,0),(-1,-1),0),("RIGHTPADDING",(0,0),(-1,-1),0),("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3)]))
+    legend_left.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.6,colors.black),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eeeeee")),("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3)]))
     abbrev_title=Paragraph("<b>Abkürzungen</b>", ParagraphStyle("abbrevtitle", parent=small, fontName="Helvetica-Bold", fontSize=7.2, leading=8))
     legend_right=Table([[abbrev_title],[abbrev_table]],colWidths=[94*mm])
-    legend_right.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.6,colors.black),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eeeeee")),("LEFTPADDING",(0,0),(-1,-1),0),("RIGHTPADDING",(0,0),(-1,-1),0),("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3)]))
+    legend_right.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.6,colors.black),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eeeeee")),("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3)]))
     combined_legend=Table([[legend_left,legend_right]],colWidths=[96*mm,96*mm])
     combined_legend.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(-1,-1),0),("RIGHTPADDING",(0,0),(-1,-1),0),("TOPPADDING",(0,0),(-1,-1),0),("BOTTOMPADDING",(0,0),(-1,-1),0)]))
     story.append(combined_legend); story.append(Spacer(1,3*mm))
