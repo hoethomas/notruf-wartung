@@ -1,4 +1,5 @@
 import base64
+import collections
 import hashlib
 import hmac
 import io
