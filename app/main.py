@@ -103,6 +103,18 @@ def init_db():
         pdf_path TEXT,
         FOREIGN KEY(technician_id) REFERENCES users(id)
     );
+    CREATE TABLE IF NOT EXISTS maintenance_transfers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        maintenance_id INTEGER NOT NULL,
+        from_user_id INTEGER NOT NULL,
+        to_user_id INTEGER NOT NULL,
+        transferred_by INTEGER NOT NULL,
+        transferred_at TEXT NOT NULL,
+        FOREIGN KEY(maintenance_id) REFERENCES maintenances(id),
+        FOREIGN KEY(from_user_id) REFERENCES users(id),
+        FOREIGN KEY(to_user_id) REFERENCES users(id),
+        FOREIGN KEY(transferred_by) REFERENCES users(id)
+    );
     CREATE TABLE IF NOT EXISTS imported_configs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
@@ -154,6 +166,8 @@ def init_db():
     add_col("config_records", "station_id", "TEXT")
     add_col("config_records", "station_system_id", "TEXT")
     add_col("maintenances", "station_id", "TEXT")
+    add_col("maintenances", "original_technician_id", "INTEGER")
+    add_col("maintenances", "last_transferred_at", "TEXT")
     add_col("users", "role", "TEXT NOT NULL DEFAULT 'technician'")
     add_col("users", "active", "INTEGER NOT NULL DEFAULT 1")
     for col, definition in [
@@ -577,7 +591,7 @@ INSPECTION_TITLES = {
 
 def make_pdf(mid):
     c = db()
-    m = c.execute("SELECT m.*,u.display_name FROM maintenances m JOIN users u ON u.id=m.technician_id WHERE m.id=?", (mid,)).fetchone()
+    m = c.execute("SELECT m.*,u.display_name,ou.display_name AS original_display_name FROM maintenances m JOIN users u ON u.id=m.technician_id LEFT JOIN users ou ON ou.id=m.original_technician_id WHERE m.id=?", (mid,)).fetchone()
     rows = c.execute("SELECT * FROM results WHERE maintenance_id=? ORDER BY room_name", (mid,)).fetchall()
     c.close()
     if not m: raise ValueError("Wartung nicht gefunden")
@@ -620,7 +634,11 @@ def make_pdf(mid):
     widths=[46*mm]+[15.2*mm]*len(CHECKS)
     table=Table(data,repeatRows=1,colWidths=widths,hAlign="CENTER")
     table.setStyle(TableStyle([("GRID",(0,0),(-1,-1),0.45,colors.black),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eeeeee")),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,0),6.1),("FONTSIZE",(1,1),(-1,-1),6.4),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ALIGN",(0,0),(-1,-1),"CENTER"),("ALIGN",(0,1),(0,-1),"LEFT"),("TOPPADDING",(0,0),(-1,-1),3.5),("BOTTOMPADDING",(0,0),(-1,-1),3.5)]))
-    story=[header,Spacer(1,2*mm),table,Spacer(1,3*mm)]
+    story=[header]
+    if m["original_display_name"] and m["original_display_name"] != m["display_name"]:
+        transfer_note = Paragraph(f"<b>Wartung übernommen von:</b> {m['display_name']} &nbsp; | &nbsp; <b>Begonnen von:</b> {m['original_display_name']}", small)
+        story.extend([Spacer(1,1.5*mm), transfer_note])
+    story.extend([Spacer(1,2*mm),table,Spacer(1,3*mm)])
     if noks:
         issue_data=[[Paragraph("Zusammenfassung der Mängel", ParagraphStyle("ih",parent=small,fontName="Helvetica-Bold"))]]
         for room,label,detail in noks:
@@ -823,17 +841,41 @@ def admin_dashboard(request: Request):
     c.close()
     return TEMPLATES.TemplateResponse("admin.html",{"request":request,"user":u,"stats":stats,"users_count":users_count,"maintenances":rows})
 
+@app.post("/admin/maintenance/{mid}/transfer")
+def admin_transfer_maintenance(request: Request, mid: int, target_user_id: int = Form(...)):
+    u=current_user(request)
+    if not u or u["role"] != "admin":
+        return RedirectResponse("/login",303)
+    c=db()
+    m=c.execute("SELECT id,technician_id,status FROM maintenances WHERE id=?",(mid,)).fetchone()
+    target=c.execute("SELECT id,display_name,active,role FROM users WHERE id=?",(target_user_id,)).fetchone()
+    if not m:
+        c.close(); return RedirectResponse("/admin",303)
+    if m["status"] == "completed":
+        c.close(); return RedirectResponse(f"/admin/maintenance/{mid}?error=Abgeschlossene+Wartungen+können+nicht+übertragen+werden",303)
+    if not target or not target["active"] or target["role"] != "technician":
+        c.close(); return RedirectResponse(f"/admin/maintenance/{mid}?error=Ungültiger+Techniker",303)
+    if target["id"] == m["technician_id"]:
+        c.close(); return RedirectResponse(f"/admin/maintenance/{mid}?error=Die+Wartung+ist+bereits+diesem+Techniker+zugeordnet",303)
+    now=datetime.now().isoformat(timespec="seconds")
+    c.execute("INSERT INTO maintenance_transfers(maintenance_id,from_user_id,to_user_id,transferred_by,transferred_at) VALUES(?,?,?,?,?)",(mid,m["technician_id"],target["id"],u["id"],now))
+    c.execute("UPDATE maintenances SET technician_id=?,last_transferred_at=?,updated_at=? WHERE id=?",(target["id"],now,now,mid))
+    c.commit(); c.close()
+    return RedirectResponse(f"/admin/maintenance/{mid}?success=Wartung+an+{target['display_name']}+übertragen",303)
+
 @app.get("/admin/maintenance/{mid}", response_class=HTMLResponse)
 def admin_maintenance(request: Request, mid:int):
     u=current_user(request)
     if not u: return RedirectResponse("/login",303)
     if u["role"] != "admin": return RedirectResponse("/",303)
-    c=db(); m=c.execute("SELECT m.*,u.display_name FROM maintenances m JOIN users u ON u.id=m.technician_id WHERE m.id=?",(mid,)).fetchone()
+    c=db(); m=c.execute("SELECT m.*,u.display_name,ou.display_name AS original_display_name FROM maintenances m JOIN users u ON u.id=m.technician_id LEFT JOIN users ou ON ou.id=m.original_technician_id WHERE m.id=?",(mid,)).fetchone()
     if not m: c.close(); return RedirectResponse("/admin",303)
-    rows=c.execute("SELECT * FROM results WHERE maintenance_id=? ORDER BY manual,room_name",(mid,)).fetchall(); c.close()
+    rows=c.execute("SELECT * FROM results WHERE maintenance_id=? ORDER BY manual,room_name",(mid,)).fetchall()
+    transfers=c.execute("SELECT t.*,fu.display_name AS from_name,tu.display_name AS to_name,au.display_name AS admin_name FROM maintenance_transfers t JOIN users fu ON fu.id=t.from_user_id JOIN users tu ON tu.id=t.to_user_id JOIN users au ON au.id=t.transferred_by WHERE t.maintenance_id=? ORDER BY t.transferred_at",(mid,)).fetchall()
+    technicians=c.execute("SELECT id,display_name FROM users WHERE role='technician' AND active=1 AND id<>? ORDER BY display_name COLLATE NOCASE",(m["technician_id"],)).fetchall(); c.close()
     total=len(rows); checked=sum(1 for r in rows if all(r[k] is not None for k in CHECK_KEYS)); nok=sum(1 for r in rows if any(r[k]=="NOK" for k in CHECK_KEYS))
     pct=round((checked/total)*100) if total else 0
-    return TEMPLATES.TemplateResponse("admin_maintenance.html",{"request":request,"user":u,"m":m,"rows":rows,"checks":CHECKS,"total":total,"checked":checked,"nok":nok,"pct":pct})
+    return TEMPLATES.TemplateResponse("admin_maintenance.html",{"request":request,"user":u,"m":m,"rows":rows,"checks":CHECKS,"total":total,"checked":checked,"nok":nok,"pct":pct,"technicians":technicians,"transfers":transfers})
 
 @app.get("/api/houses")
 def api_houses(request: Request):
@@ -859,8 +901,10 @@ def home(request: Request):
     if u["role"]=="admin": return RedirectResponse("/admin",303)
     c=db(); maint=c.execute("""SELECT m.*,u.display_name,
         COUNT(res.id) AS total_rooms,
-        SUM(CASE WHEN res.zt IS NOT NULL AND res.zl IS NOT NULL AND res.rt_b1 IS NOT NULL AND res.rt_b2 IS NOT NULL AND res.rt_b3 IS NOT NULL AND res.rt IS NOT NULL AND res.pt_bad IS NOT NULL AND res.rt_bad IS NOT NULL AND res.zt_bad IS NOT NULL AND res.at_bad IS NOT NULL THEN 1 ELSE 0 END) AS checked_rooms,
-        SUM(CASE WHEN res.zt='NOK' OR res.zl='NOK' OR res.rt_b1='NOK' OR res.rt_b2='NOK' OR res.rt_b3='NOK' OR res.rt='NOK' OR res.rt_bad='NOK' OR res.pt_bad='NOK' OR res.zt_bad='NOK' OR res.at_bad='NOK' THEN 1 ELSE 0 END) AS nok_rooms
+        SUM(CASE WHEN res.zt IN ('OK','NOK','NF') AND res.zl IN ('OK','NOK','NF') AND res.rt_b1 IN ('OK','NOK','NF') AND res.rt_b2 IN ('OK','NOK','NF') AND res.rt_b3 IN ('OK','NOK','NF') AND res.rt IN ('OK','NOK','NF') AND res.pt_bad IN ('OK','NOK','NF') AND res.rt_bad IN ('OK','NOK','NF') AND res.zt_bad IN ('OK','NOK','NF') AND res.at_bad IN ('OK','NOK','NF') THEN 1 ELSE 0 END) AS checked_rooms,
+        SUM(CASE WHEN res.zt IS NOT NULL OR res.zl IS NOT NULL OR res.rt_b1 IS NOT NULL OR res.rt_b2 IS NOT NULL OR res.rt_b3 IS NOT NULL OR res.rt IS NOT NULL OR res.pt_bad IS NOT NULL OR res.rt_bad IS NOT NULL OR res.zt_bad IS NOT NULL OR res.at_bad IS NOT NULL THEN 1 ELSE 0 END) AS started_rooms,
+        SUM(CASE WHEN res.zt='NOK' OR res.zl='NOK' OR res.rt_b1='NOK' OR res.rt_b2='NOK' OR res.rt_b3='NOK' OR res.rt='NOK' OR res.rt_bad='NOK' OR res.pt_bad='NOK' OR res.zt_bad='NOK' OR res.at_bad='NOK' THEN 1 ELSE 0 END) AS nok_rooms,
+        SUM((CASE WHEN res.zt IS NOT NULL THEN 1 ELSE 0 END)+(CASE WHEN res.zl IS NOT NULL THEN 1 ELSE 0 END)+(CASE WHEN res.rt_b1 IS NOT NULL THEN 1 ELSE 0 END)+(CASE WHEN res.rt_b2 IS NOT NULL THEN 1 ELSE 0 END)+(CASE WHEN res.rt_b3 IS NOT NULL THEN 1 ELSE 0 END)+(CASE WHEN res.rt IS NOT NULL THEN 1 ELSE 0 END)+(CASE WHEN res.pt_bad IS NOT NULL THEN 1 ELSE 0 END)+(CASE WHEN res.rt_bad IS NOT NULL THEN 1 ELSE 0 END)+(CASE WHEN res.zt_bad IS NOT NULL THEN 1 ELSE 0 END)+(CASE WHEN res.at_bad IS NOT NULL THEN 1 ELSE 0 END)) AS checked_components
         FROM maintenances m JOIN users u ON u.id=m.technician_id LEFT JOIN results res ON res.maintenance_id=m.id
         GROUP BY m.id ORDER BY m.id DESC LIMIT 30""").fetchall(); c.close()
     houses=active_houses(request)
@@ -890,7 +934,7 @@ def maintenance_start(request: Request,hauscode:str=Form(...),station_id:str=For
     if not rooms:return RedirectResponse("/?error=Keine+Zimmer+gefunden",303)
     if inspection_type not in INSPECTION_TITLES: return RedirectResponse("/?error=Ungültige+Art+der+Überprüfung",303)
     c=db(); now=datetime.now().isoformat(timespec="seconds"); u=current_user(request)
-    cur=c.execute("INSERT INTO maintenances(hauscode,station,station_id,technician_id,inspector_name,inspection_year,inspection_type,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",(hauscode.strip(),station,station_id.strip(),u["id"],u["display_name"],inspection_year,inspection_type,now,now));mid=cur.lastrowid
+    cur=c.execute("INSERT INTO maintenances(hauscode,station,station_id,technician_id,original_technician_id,inspector_name,inspection_year,inspection_type,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",(hauscode.strip(),station,station_id.strip(),u["id"],u["id"],u["display_name"],inspection_year,inspection_type,"open",now,now));mid=cur.lastrowid
     c.executemany("INSERT INTO results(maintenance_id,room_name,manual) VALUES(?,?,0)",[(mid,r) for r in rooms]);c.commit();c.close();return RedirectResponse(f"/maintenance/{mid}",303)
 
 @app.get("/maintenance/{mid}",response_class=HTMLResponse)
@@ -916,7 +960,7 @@ async def maintenance_save(request:Request,mid:int):
     save_results_from_form(c,mid,form)
     inspector=(form.get("inspector_name") or "").strip();year=form.get("inspection_year") or None; inspection_type=(form.get("inspection_type") or "").strip()
     if inspection_type not in INSPECTION_TITLES: inspection_type="Wartung"
-    c.execute("UPDATE maintenances SET inspector_name=?,inspection_year=?,inspection_type=?,updated_at=? WHERE id=?",(inspector,year,inspection_type,datetime.now().isoformat(timespec="seconds"),mid));c.commit();c.close();return RedirectResponse(f"/maintenance/{mid}",303)
+    c.execute("UPDATE maintenances SET inspector_name=?,inspection_year=?,inspection_type=?,status=CASE WHEN status='completed' THEN status ELSE 'open' END,updated_at=? WHERE id=?",(inspector,year,inspection_type,datetime.now().isoformat(timespec="seconds"),mid));c.commit();c.close();return RedirectResponse(f"/maintenance/{mid}",303)
 
 @app.post("/maintenance/{mid}/add-room")
 def add_room(request:Request,mid:int,room_name:str=Form(...)):
