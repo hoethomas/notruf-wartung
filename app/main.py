@@ -596,21 +596,34 @@ def make_pdf(mid):
     else:
         story.extend([Paragraph("<b>Zusammenfassung der Mängel:</b> Keine Beanstandungen.",small),Spacer(1,3*mm)])
 
-    legend_title=Paragraph("<b>Legende</b>", ParagraphStyle("legendtitle", parent=small, fontName="Helvetica-Bold", fontSize=7.2, leading=8))
+    # Legende und Abkürzungen: jeweils eine einzige Außentabelle.
+    # Die inneren Trennlinien beginnen erst unterhalb des grauen Kopfbereichs.
     legend_cells=[
+        [Paragraph("<b>Legende</b>", ParagraphStyle("legendtitle", parent=small, fontName="Helvetica-Bold", fontSize=7.2, leading=8)), ""],
         [Paragraph("<font color='#16a34a'><b>✓</b></font>", ParagraphStyle("lgok", parent=center, fontSize=11, leading=11)), Paragraph("<b>OK</b> – Prüfung in Ordnung", small)],
         [Paragraph("<font color='#dc2626'><b>!</b></font>", ParagraphStyle("lgnok", parent=center, fontSize=11, leading=11)), Paragraph("<b>NOK</b> – Mangel festgestellt", small)],
         [Paragraph("<font color='#64748b'><b>—</b></font>", ParagraphStyle("lgnf", parent=center, fontSize=11, leading=11)), Paragraph("<b>nicht ausgeführt</b>", small)],
     ]
-    legend_table=Table(legend_cells, colWidths=[12*mm,76*mm], hAlign="CENTER")
+    legend_table=Table(legend_cells, colWidths=[12*mm,76*mm], rowHeights=[9*mm,7.5*mm,7.5*mm,7.5*mm], hAlign="CENTER")
     legend_table.setStyle(TableStyle([
-        ("LINEBELOW",(0,0),(-1,1),0.3,colors.black),("LINEAFTER",(0,0),(0,-1),0.3,colors.black),
-        ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ALIGN",(0,0),(0,-1),"CENTER"),
-        ("BACKGROUND",(0,0),(0,0),colors.HexColor("#dcfce7")),("BACKGROUND",(0,1),(0,1),colors.HexColor("#fee2e2")),("BACKGROUND",(0,2),(0,2),colors.HexColor("#e2e8f0")),
-        ("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),2.5),("BOTTOMPADDING",(0,0),(-1,-1),2.5)
+        ("SPAN",(0,0),(-1,0)),
+        ("BOX",(0,0),(-1,-1),0.6,colors.black),
+        ("LINEBELOW",(0,0),(-1,0),0.6,colors.black),
+        ("LINEBELOW",(0,1),(-1,-2),0.3,colors.black),
+        ("LINEAFTER",(0,1),(0,-1),0.3,colors.black),
+        ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eeeeee")),
+        ("BACKGROUND",(0,1),(0,1),colors.HexColor("#dcfce7")),
+        ("BACKGROUND",(0,2),(0,2),colors.HexColor("#fee2e2")),
+        ("BACKGROUND",(0,3),(0,3),colors.HexColor("#e2e8f0")),
+        ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+        ("ALIGN",(0,1),(0,-1),"CENTER"),
+        ("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),
+        ("TOPPADDING",(0,0),(-1,0),2),("BOTTOMPADDING",(0,0),(-1,0),2),
+        ("TOPPADDING",(0,1),(-1,-1),1.5),("BOTTOMPADDING",(0,1),(-1,-1),1.5),
     ]))
 
     abbrev_cells=[
+        [Paragraph("<b>Abkürzungen</b>", ParagraphStyle("abbrevtitle", parent=small, fontName="Helvetica-Bold", fontSize=7.2, leading=8)), ""],
         [Paragraph("<b>ZT:</b>",small), Paragraph("Zimmerterminal",small)],
         [Paragraph("<b>ZL:</b>",small), Paragraph("Zimmerlampe",small)],
         [Paragraph("<b>RT B1:</b>",small), Paragraph("Ruftaster Bett 1",small)],
@@ -622,19 +635,26 @@ def make_pdf(mid):
         [Paragraph("<b>ZT Bad:</b>",small), Paragraph("Zugtaster Bad",small)],
         [Paragraph("<b>AT Bad:</b>",small), Paragraph("Abstelltaster Bad",small)],
     ]
-    abbrev_table=Table(abbrev_cells, colWidths=[25*mm,63*mm], hAlign="CENTER")
+    abbrev_table=Table(abbrev_cells, colWidths=[25*mm,63*mm], rowHeights=[9*mm]+[6.5*mm]*10, hAlign="CENTER")
     abbrev_table.setStyle(TableStyle([
-        ("LINEBELOW",(0,0),(-1,-2),0.3,colors.black),("LINEAFTER",(0,0),(0,-1),0.3,colors.black),
+        ("SPAN",(0,0),(-1,0)),
+        ("BOX",(0,0),(-1,-1),0.6,colors.black),
+        ("LINEBELOW",(0,0),(-1,0),0.6,colors.black),
+        ("LINEBELOW",(0,1),(-1,-2),0.3,colors.black),
+        ("LINEAFTER",(0,1),(0,-1),0.3,colors.black),
+        ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eeeeee")),
         ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
-        ("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),2),("BOTTOMPADDING",(0,0),(-1,-1),2)
+        ("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),
+        ("TOPPADDING",(0,0),(-1,0),2),("BOTTOMPADDING",(0,0),(-1,0),2),
+        ("TOPPADDING",(0,1),(-1,-1),1),("BOTTOMPADDING",(0,1),(-1,-1),1),
     ]))
-    legend_left=Table([[legend_title],[legend_table]],colWidths=[94*mm])
-    legend_left.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.6,colors.black),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eeeeee")),("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3)]))
-    abbrev_title=Paragraph("<b>Abkürzungen</b>", ParagraphStyle("abbrevtitle", parent=small, fontName="Helvetica-Bold", fontSize=7.2, leading=8))
-    legend_right=Table([[abbrev_title],[abbrev_table]],colWidths=[94*mm])
-    legend_right.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.6,colors.black),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eeeeee")),("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3)]))
-    combined_legend=Table([[legend_left,legend_right]],colWidths=[96*mm,96*mm])
-    combined_legend.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(-1,-1),0),("RIGHTPADDING",(0,0),(-1,-1),0),("TOPPADDING",(0,0),(-1,-1),0),("BOTTOMPADDING",(0,0),(-1,-1),0)]))
+
+    combined_legend=Table([[legend_table,abbrev_table]],colWidths=[96*mm,96*mm], hAlign="CENTER")
+    combined_legend.setStyle(TableStyle([
+        ("VALIGN",(0,0),(-1,-1),"TOP"),
+        ("LEFTPADDING",(0,0),(-1,-1),1*mm),("RIGHTPADDING",(0,0),(-1,-1),1*mm),
+        ("TOPPADDING",(0,0),(-1,-1),0),("BOTTOMPADDING",(0,0),(-1,-1),0),
+    ]))
     story.append(combined_legend); story.append(Spacer(1,3*mm))
 
     sig_img=""
