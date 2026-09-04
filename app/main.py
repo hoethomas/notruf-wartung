@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, Request, Form, UploadFile, File
+from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -81,7 +81,8 @@ def init_db():
         username TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
         display_name TEXT NOT NULL,
-        role TEXT NOT NULL DEFAULT 'technician'
+        role TEXT NOT NULL DEFAULT 'technician',
+        active INTEGER NOT NULL DEFAULT 1
     );
     CREATE TABLE IF NOT EXISTS maintenances (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -154,6 +155,7 @@ def init_db():
     add_col("config_records", "station_system_id", "TEXT")
     add_col("maintenances", "station_id", "TEXT")
     add_col("users", "role", "TEXT NOT NULL DEFAULT 'technician'")
+    add_col("users", "active", "INTEGER NOT NULL DEFAULT 1")
     for col, definition in [
         ("inspector_name", "TEXT"), ("inspection_year", "INTEGER"), ("inspection_type", "TEXT"), ("email_address", "TEXT"),
         ("updated_at", "TEXT"),
@@ -208,6 +210,26 @@ def load_master_data():
 def is_admin(request):
     u=current_user(request)
     return bool(u and u["role"] == "admin")
+
+def can_access_maintenance(request, mid, write=False):
+    """Admins may view every maintenance; technicians may only access their own.
+    Completed maintenances are read-only for everyone.
+    """
+    u=current_user(request)
+    if not u:
+        return None
+    c=db()
+    m=c.execute("SELECT m.*,u.display_name FROM maintenances m JOIN users u ON u.id=m.technician_id WHERE m.id=?",(mid,)).fetchone()
+    c.close()
+    if not m:
+        return None
+    if u["role"] != "admin" and m["technician_id"] != u["id"]:
+        return None
+    if write and m["status"] == "completed":
+        return None
+    if write and u["role"] == "admin":
+        return None
+    return m
 
 def get_active_config_id(request):
     cid=request.session.get("config_id")
@@ -712,7 +734,13 @@ def users_page(request: Request):
     u=current_user(request)
     if not u: return RedirectResponse("/login",303)
     if u["role"] != "admin": return RedirectResponse("/",303)
-    c=db(); users=c.execute("SELECT id,username,display_name,role FROM users ORDER BY username").fetchall(); c.close()
+    c=db()
+    users=c.execute("""SELECT u.id,u.username,u.display_name,u.role,u.active,
+        COUNT(m.id) AS maintenance_count,
+        SUM(CASE WHEN m.status='completed' THEN 1 ELSE 0 END) AS completed_count
+        FROM users u LEFT JOIN maintenances m ON m.technician_id=u.id
+        GROUP BY u.id ORDER BY u.username COLLATE NOCASE""").fetchall()
+    c.close()
     return TEMPLATES.TemplateResponse("users.html", {"request":request,"user":u,"users":users})
 
 @app.post("/users/create")
@@ -723,17 +751,88 @@ def users_create(request: Request, username:str=Form(...), display_name:str=Form
     if not username or not display_name or not password: return RedirectResponse("/users?error=Bitte+alle+Felder+ausfüllen",303)
     c=db()
     try:
-        c.execute("INSERT INTO users(username,password_hash,display_name,role) VALUES(?,?,?,?)",(username,hash_password(password),display_name,role)); c.commit()
+        c.execute("INSERT INTO users(username,password_hash,display_name,role,active) VALUES(?,?,?,?,1)",(username,hash_password(password),display_name,role)); c.commit()
     except sqlite3.IntegrityError:
         c.close(); return RedirectResponse("/users?error=Benutzername+bereits+vorhanden",303)
     c.close(); return RedirectResponse("/users?success=Benutzer+angelegt",303)
+
+@app.post("/users/{uid}/edit")
+def users_edit(request: Request, uid:int, username:str=Form(...), display_name:str=Form(...), role:str=Form(...), password:str=Form("")):
+    u=current_user(request)
+    if not u or u["role"] != "admin": return RedirectResponse("/",303)
+    username=username.strip(); display_name=display_name.strip(); role=role if role in ("admin","technician") else "technician"
+    if not username or not display_name: return RedirectResponse("/users?error=Benutzername+und+Name+sind+erforderlich",303)
+    c=db(); target=c.execute("SELECT id FROM users WHERE id=?",(uid,)).fetchone()
+    if not target:
+        c.close(); return RedirectResponse("/users?error=Benutzer+nicht+gefunden",303)
+    if uid == u["id"] and role != "admin":
+        c.close(); return RedirectResponse("/users?error=Der+eigene+Admin-Account+kann+nicht+herabgestuft+werden",303)
+    try:
+        if password.strip():
+            c.execute("UPDATE users SET username=?,display_name=?,role=?,password_hash=? WHERE id=?",(username,display_name,role,hash_password(password.strip()),uid))
+        else:
+            c.execute("UPDATE users SET username=?,display_name=?,role=? WHERE id=?",(username,display_name,role,uid))
+        c.commit()
+    except sqlite3.IntegrityError:
+        c.close(); return RedirectResponse("/users?error=Benutzername+bereits+vorhanden",303)
+    c.close(); return RedirectResponse("/users?success=Benutzer+aktualisiert",303)
+
+@app.post("/users/{uid}/toggle")
+def users_toggle(request: Request, uid:int):
+    u=current_user(request)
+    if not u or u["role"] != "admin": return RedirectResponse("/",303)
+    if uid == u["id"]: return RedirectResponse("/users?error=Der+eigene+Account+kann+nicht+deaktiviert+werden",303)
+    c=db(); row=c.execute("SELECT active FROM users WHERE id=?",(uid,)).fetchone()
+    if not row:
+        c.close(); return RedirectResponse("/users?error=Benutzer+nicht+gefunden",303)
+    c.execute("UPDATE users SET active=? WHERE id=?",(0 if row["active"] else 1,uid)); c.commit(); c.close()
+    return RedirectResponse("/users?success=Benutzerstatus+aktualisiert",303)
 
 @app.post("/users/{uid}/delete")
 def users_delete(request: Request, uid:int):
     u=current_user(request)
     if not u or u["role"] != "admin": return RedirectResponse("/",303)
     if uid == u["id"]: return RedirectResponse("/users?error=Eigener+Benutzer+kann+nicht+gelöscht+werden",303)
-    c=db(); c.execute("DELETE FROM users WHERE id=?",(uid,)); c.commit(); c.close(); return RedirectResponse("/users?success=Benutzer+gelöscht",303)
+    c=db(); count=c.execute("SELECT COUNT(*) AS n FROM maintenances WHERE technician_id=?",(uid,)).fetchone()["n"]
+    if count:
+        c.execute("UPDATE users SET active=0 WHERE id=?",(uid,)); c.commit(); c.close()
+        return RedirectResponse("/users?error=Benutzer+hat+bereits+Wartungshistorie+und+wurde+deshalb+nur+deaktiviert",303)
+    c.execute("DELETE FROM users WHERE id=?",(uid,)); c.commit(); c.close(); return RedirectResponse("/users?success=Benutzer+gelöscht",303)
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_dashboard(request: Request):
+    u=current_user(request)
+    if not u: return RedirectResponse("/login",303)
+    if u["role"] != "admin": return RedirectResponse("/",303)
+    c=db()
+    stats=c.execute("""SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN status='open' THEN 1 ELSE 0 END) AS open_count,
+      SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed_count,
+      COUNT(DISTINCT technician_id) AS technician_count
+      FROM maintenances""").fetchone()
+    users_count=c.execute("SELECT COUNT(*) AS n FROM users WHERE active=1").fetchone()["n"]
+    rows=c.execute("""SELECT m.*,u.display_name,
+      COUNT(res.id) AS total_rooms,
+      SUM(CASE WHEN res.zt IS NOT NULL AND res.zl IS NOT NULL AND res.rt_b1 IS NOT NULL AND res.rt_b2 IS NOT NULL AND res.rt_b3 IS NOT NULL AND res.rt IS NOT NULL AND res.pt_bad IS NOT NULL AND res.rt_bad IS NOT NULL AND res.zt_bad IS NOT NULL AND res.at_bad IS NOT NULL THEN 1 ELSE 0 END) AS checked_rooms,
+      SUM(CASE WHEN res.zt='NOK' OR res.zl='NOK' OR res.rt_b1='NOK' OR res.rt_b2='NOK' OR res.rt_b3='NOK' OR res.rt='NOK' OR res.rt_bad='NOK' OR res.pt_bad='NOK' OR res.zt_bad='NOK' OR res.at_bad='NOK' THEN 1 ELSE 0 END) AS nok_rooms,
+      SUM(CASE WHEN res.zt='NOK' THEN 1 ELSE 0 END)+SUM(CASE WHEN res.zl='NOK' THEN 1 ELSE 0 END)+SUM(CASE WHEN res.rt_b1='NOK' THEN 1 ELSE 0 END)+SUM(CASE WHEN res.rt_b2='NOK' THEN 1 ELSE 0 END)+SUM(CASE WHEN res.rt_b3='NOK' THEN 1 ELSE 0 END)+SUM(CASE WHEN res.rt='NOK' THEN 1 ELSE 0 END)+SUM(CASE WHEN res.pt_bad='NOK' THEN 1 ELSE 0 END)+SUM(CASE WHEN res.rt_bad='NOK' THEN 1 ELSE 0 END)+SUM(CASE WHEN res.zt_bad='NOK' THEN 1 ELSE 0 END)+SUM(CASE WHEN res.at_bad='NOK' THEN 1 ELSE 0 END) AS nok_components
+      FROM maintenances m JOIN users u ON u.id=m.technician_id LEFT JOIN results res ON res.maintenance_id=m.id
+      GROUP BY m.id ORDER BY COALESCE(m.updated_at,m.created_at) DESC, m.id DESC LIMIT 100""").fetchall()
+    c.close()
+    return TEMPLATES.TemplateResponse("admin.html",{"request":request,"user":u,"stats":stats,"users_count":users_count,"maintenances":rows})
+
+@app.get("/admin/maintenance/{mid}", response_class=HTMLResponse)
+def admin_maintenance(request: Request, mid:int):
+    u=current_user(request)
+    if not u: return RedirectResponse("/login",303)
+    if u["role"] != "admin": return RedirectResponse("/",303)
+    c=db(); m=c.execute("SELECT m.*,u.display_name FROM maintenances m JOIN users u ON u.id=m.technician_id WHERE m.id=?",(mid,)).fetchone()
+    if not m: c.close(); return RedirectResponse("/admin",303)
+    rows=c.execute("SELECT * FROM results WHERE maintenance_id=? ORDER BY manual,room_name",(mid,)).fetchall(); c.close()
+    total=len(rows); checked=sum(1 for r in rows if all(r[k] is not None for k in CHECK_KEYS)); nok=sum(1 for r in rows if any(r[k]=="NOK" for k in CHECK_KEYS))
+    pct=round((checked/total)*100) if total else 0
+    return TEMPLATES.TemplateResponse("admin_maintenance.html",{"request":request,"user":u,"m":m,"rows":rows,"checks":CHECKS,"total":total,"checked":checked,"nok":nok,"pct":pct})
 
 @app.get("/api/houses")
 def api_houses(request: Request):
@@ -756,6 +855,7 @@ def api_rooms(request: Request, hauscode: str, station_id: str):
 def home(request: Request):
     u=current_user(request)
     if not u:return RedirectResponse("/login",303)
+    if u["role"]=="admin": return RedirectResponse("/admin",303)
     c=db(); maint=c.execute("""SELECT m.*,u.display_name,
         COUNT(res.id) AS total_rooms,
         SUM(CASE WHEN res.zt IS NOT NULL AND res.zl IS NOT NULL AND res.rt_b1 IS NOT NULL AND res.rt_b2 IS NOT NULL AND res.rt_b3 IS NOT NULL AND res.rt IS NOT NULL AND res.pt_bad IS NOT NULL AND res.rt_bad IS NOT NULL AND res.zt_bad IS NOT NULL AND res.at_bad IS NOT NULL THEN 1 ELSE 0 END) AS checked_rooms,
@@ -771,8 +871,8 @@ def login_page(request: Request): return TEMPLATES.TemplateResponse("login.html"
 @app.post("/login")
 def login(request: Request,username:str=Form(...),password:str=Form(...)):
     c=db();u=c.execute("SELECT * FROM users WHERE username=?",(username.strip(),)).fetchone();c.close()
-    if not u or not verify_password(password,u["password_hash"]): return TEMPLATES.TemplateResponse("login.html",{"request":request,"error":"Benutzername oder Passwort falsch."})
-    request.session.clear(); request.session["user_id"]=u["id"]; return RedirectResponse("/",303)
+    if not u or not u["active"] or not verify_password(password,u["password_hash"]): return TEMPLATES.TemplateResponse("login.html",{"request":request,"error":"Benutzername oder Passwort falsch."})
+    request.session.clear(); request.session["user_id"]=u["id"]; return RedirectResponse("/admin" if u["role"]=="admin" else "/",303)
 
 @app.get("/logout")
 def logout(request: Request): request.session.clear();return RedirectResponse("/login",303)
@@ -795,16 +895,21 @@ def maintenance_start(request: Request,hauscode:str=Form(...),station_id:str=For
 @app.get("/maintenance/{mid}",response_class=HTMLResponse)
 def maintenance(request:Request,mid:int):
     if not require_user(request):return RedirectResponse("/login",303)
-    c=db();m=c.execute("SELECT m.*,u.display_name FROM maintenances m JOIN users u ON u.id=m.technician_id WHERE m.id=?",(mid,)).fetchone()
-    if not m:c.close();return RedirectResponse("/",303)
-    rows=c.execute("SELECT * FROM results WHERE maintenance_id=? ORDER BY manual,room_name",(mid,)).fetchall();c.close()
-    return TEMPLATES.TemplateResponse("maintenance.html",{"request":request,"user":current_user(request),"m":m,"rows":rows,"checks":CHECKS,"years":list(range(2026,2041))})
+    if is_admin(request): return RedirectResponse(f"/admin/maintenance/{mid}",303)
+    m=can_access_maintenance(request,mid,write=False)
+    if not m:
+        return RedirectResponse("/",303) if not is_admin(request) else RedirectResponse("/admin",303)
+    c=db(); rows=c.execute("SELECT * FROM results WHERE maintenance_id=? ORDER BY manual,room_name",(mid,)).fetchall(); c.close()
+    return TEMPLATES.TemplateResponse("maintenance.html",{"request":request,"user":current_user(request),"m":m,"rows":rows,"checks":CHECKS,"years":list(range(2026,2041)),"read_only":is_admin(request) or m["status"]=="completed"})
 
 @app.post("/maintenance/{mid}/save")
 async def maintenance_save(request:Request,mid:int):
     if not require_user(request):return RedirectResponse("/login",303)
-    form=await request.form();c=db();exists=c.execute("SELECT id,status FROM maintenances WHERE id=?",(mid,)).fetchone()
+    form=await request.form();c=db();exists=c.execute("SELECT id,status,technician_id FROM maintenances WHERE id=?",(mid,)).fetchone()
     if not exists:c.close();return RedirectResponse("/",303)
+    u=current_user(request)
+    if u["role"]=="admin" or exists["technician_id"]!=u["id"]:
+        c.close();return RedirectResponse(f"/admin/maintenance/{mid}" if u["role"]=="admin" else "/",303)
     if exists["status"] == "completed":
         c.close();return RedirectResponse(f"/maintenance/{mid}?error=Diese+Überprüfung+ist+bereits+abgeschlossen+und+gesperrt",303)
     save_results_from_form(c,mid,form)
@@ -817,8 +922,9 @@ def add_room(request:Request,mid:int,room_name:str=Form(...)):
     if not require_user(request):return RedirectResponse("/login",303)
     room_name=room_name.strip()
     if room_name:
-        c=db();m=c.execute("SELECT status FROM maintenances WHERE id=?",(mid,)).fetchone()
-        if not m or m["status"] == "completed":
+        c=db();m=c.execute("SELECT status,technician_id FROM maintenances WHERE id=?",(mid,)).fetchone()
+        u=current_user(request)
+        if not m or m["status"] == "completed" or u["role"]=="admin" or m["technician_id"]!=u["id"]:
             c.close();return RedirectResponse(f"/maintenance/{mid}",303)
         c.execute("INSERT INTO results(maintenance_id,room_name,manual) VALUES(?,?,1)",(mid,room_name));c.execute("UPDATE maintenances SET updated_at=? WHERE id=?",(datetime.now().isoformat(timespec="seconds"),mid));c.commit();c.close()
     return RedirectResponse(f"/maintenance/{mid}",303)
@@ -829,8 +935,11 @@ async def maintenance_complete(request:Request,mid:int):
     form=await request.form();sig=(form.get("signature") or "").strip();inspector=(form.get("inspector_name") or "").strip();year=form.get("inspection_year") or None; inspection_type=(form.get("inspection_type") or "").strip()
     if not sig or not sig.startswith("data:image"):
         return RedirectResponse(f"/maintenance/{mid}?error=Bitte+Unterschrift+setzen",303)
-    c=db();exists=c.execute("SELECT id,status FROM maintenances WHERE id=?",(mid,)).fetchone()
+    c=db();exists=c.execute("SELECT id,status,technician_id FROM maintenances WHERE id=?",(mid,)).fetchone()
     if not exists:c.close();return RedirectResponse("/",303)
+    u=current_user(request)
+    if u["role"]=="admin" or exists["technician_id"]!=u["id"]:
+        c.close();return RedirectResponse(f"/admin/maintenance/{mid}" if u["role"]=="admin" else "/",303)
     if exists["status"] == "completed":
         c.close();return RedirectResponse(f"/maintenance/{mid}?error=Diese+Überprüfung+ist+bereits+abgeschlossen+und+gesperrt",303)
     save_results_from_form(c,mid,form)
@@ -844,13 +953,16 @@ async def maintenance_complete(request:Request,mid:int):
 @app.get("/maintenance/{mid}/completed",response_class=HTMLResponse)
 def maintenance_completed(request:Request,mid:int):
     if not require_user(request):return RedirectResponse("/login",303)
-    c=db();m=c.execute("SELECT m.*,u.display_name FROM maintenances m JOIN users u ON u.id=m.technician_id WHERE m.id=?",(mid,)).fetchone();c.close()
-    if not m:return RedirectResponse("/",303)
+    m=can_access_maintenance(request,mid,write=False)
+    if not m:return RedirectResponse("/admin" if is_admin(request) else "/",303)
     return TEMPLATES.TemplateResponse("completed.html",{"request":request,"user":current_user(request),"m":m,"completed_date":format_date_de(m["completed_at"])})
 
 @app.get("/maintenance/{mid}/pdf")
 def maintenance_pdf(request:Request,mid:int):
     if not require_user(request):return RedirectResponse("/login",303)
+    access=can_access_maintenance(request,mid,write=False)
+    if not access:
+        raise HTTPException(status_code=404,detail="Überprüfung nicht gefunden")
     c=db()
     m=c.execute("SELECT * FROM maintenances WHERE id=?",(mid,)).fetchone()
     c.close()
