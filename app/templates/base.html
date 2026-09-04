@@ -22,6 +22,38 @@ table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid #e5e7eb;
   .top{padding:12px 14px;font-size:14px}
   .actions .btn{font-size:14px;padding:10px 12px}
   .maintenance-table-card{padding:10px;background:transparent;box-shadow:none}
+  .mobile-maintenance-app{display:block}
+  .maintenance-table-card>.maintenance-table{display:none!important}
+  .mobile-room-overview{display:block}
+  .mobile-app-title{display:flex;justify-content:space-between;align-items:end;padding:4px 4px 10px;font-size:18px}
+  .mobile-app-title span{font-size:13px;color:#64748b;font-weight:600}
+  .mobile-progress{height:8px;background:#e2e8f0;border-radius:99px;overflow:hidden;margin:0 4px 12px}
+  .mobile-progress>div{height:100%;width:0;background:#16a34a;border-radius:99px;transition:width .2s ease}
+  .mobile-room-search{margin:0 0 10px;width:100%;height:48px;border:1px solid #cbd5e1;border-radius:12px;background:#fff;padding:0 14px;font-size:16px;box-sizing:border-box}
+  #mobileRoomList{display:flex;flex-direction:column;gap:8px}
+  .mobile-room-card{width:100%;border:1px solid #e5e7eb;background:#fff;border-radius:14px;padding:12px 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;text-align:left;box-shadow:0 2px 8px #0000000b;color:#172033}
+  .mobile-room-card:active{transform:scale(.99)}
+  .mobile-room-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .mobile-room-main b{font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mobile-room-main span,.mobile-room-main small{font-size:11px;color:#64748b}
+  .mobile-room-counts{display:flex;align-items:center;gap:8px;white-space:nowrap}
+  .mobile-room-counts i{font-style:normal;font-size:13px}
+  .mobile-room-counts .count-ok{color:#16a34a}.mobile-room-counts .count-nok{color:#dc2626}.mobile-room-counts .count-nf{color:#64748b}
+  .mobile-room-counts strong{font-size:28px;font-weight:400;color:#64748b;line-height:1}
+  .mobile-room-editor{background:#fff;border-radius:14px;padding:10px 4px 4px}
+  .mobile-editor-head{display:grid;grid-template-columns:46px 1fr 46px;align-items:center;text-align:center;margin-bottom:6px}
+  .mobile-editor-head>div{display:flex;flex-direction:column;gap:2px}.mobile-editor-head b{font-size:20px}.mobile-editor-head span{font-size:12px;color:#64748b}
+  .mobile-nav-btn{width:44px;height:44px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;font-size:30px;color:#172033}
+  .mobile-back-link{border:0;background:none;color:#2563eb;padding:6px 0 10px;font-size:14px}
+  .mobile-component-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;padding:9px 2px;border-bottom:1px solid #eef2f7;min-height:58px;box-sizing:border-box}
+  .mobile-component-label{display:flex;flex-direction:column;gap:2px;min-width:0}.mobile-component-label b{font-size:16px}.mobile-component-label span{font-size:11px;color:#64748b;line-height:1.2}
+  .mobile-status-actions{display:flex;gap:6px}.mobile-status-btn{width:48px;height:48px;border:1px solid #cbd5e1;border-radius:12px;background:#fff;display:flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer}
+  .mobile-status-btn input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}.mobile-status-btn>span{font-size:25px;font-weight:700;line-height:1}
+  .mobile-status-btn.status-ok>span{color:#16a34a}.mobile-status-btn.status-nok>span{color:#dc2626}.mobile-status-btn.status-nf>span{color:#64748b}
+  .mobile-status-btn:has(input:checked){transform:scale(1.04)}.mobile-status-btn.status-ok:has(input:checked){background:#dcfce7;border:3px solid #16a34a}.mobile-status-btn.status-nok:has(input:checked){background:#fee2e2;border:3px solid #dc2626}.mobile-status-btn.status-nf:has(input:checked){background:#e2e8f0;border:3px solid #64748b}
+  .mobile-nok-details{margin:10px 0;padding:10px;background:#fff7ed;border-radius:10px}
+  .mobile-next-btn,.mobile-prev-btn{width:100%;margin-top:10px;text-align:center}
+  .mobile-prev-btn{margin-bottom:4px}
   .maintenance-table-card .scroll{overflow:visible}
   .mobile-maintenance-intro{display:flex;flex-direction:column;gap:4px;margin:0 0 10px;padding:12px 14px;background:#fff;border-radius:12px;box-shadow:0 2px 10px #0000000d}
   .mobile-maintenance-intro b{font-size:18px}
@@ -47,7 +79,7 @@ table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid #e5e7eb;
   .signature{max-width:100%;height:auto}
   .btn{min-height:46px}
 }
-@media(min-width:701px){.mobile-maintenance-intro{display:none}}
+@media(min-width:701px){.mobile-maintenance-intro{display:none}.mobile-maintenance-app{display:none}}
 
 </style>
 </head>
