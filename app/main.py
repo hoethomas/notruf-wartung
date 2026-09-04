@@ -15,6 +15,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request, Form, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -32,6 +33,7 @@ TEMPLATES = Jinja2Templates(directory=str(BASE / "app" / "templates"))
 
 app = FastAPI(title="Notrufanlagen Wartung")
 app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SESSION_SECRET", "change-this-secret"))
+app.mount("/static", StaticFiles(directory=str(BASE / "app" / "static")), name="static")
 
 CHECKS = [
     ("zt", "ZT", ["OK", "NOK"]),
