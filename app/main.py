@@ -599,12 +599,12 @@ def make_pdf(mid):
     # Legende und Abkürzungen: jeweils eine einzige Außentabelle.
     # Die inneren Trennlinien beginnen erst unterhalb des grauen Kopfbereichs.
     legend_cells=[
-        [Paragraph("<b>Legende</b>", ParagraphStyle("legendtitle", parent=small, fontName="Helvetica-Bold", fontSize=7.2, leading=8)), ""],
+        [Paragraph("<b>Legende</b>", ParagraphStyle("legendtitle", parent=small, fontName="Helvetica-Bold", fontSize=7.0, leading=7.5)), ""],
         [Paragraph("<font color='#16a34a'><b>✓</b></font>", ParagraphStyle("lgok", parent=center, fontSize=11, leading=11)), Paragraph("<b>OK</b> – Prüfung in Ordnung", small)],
         [Paragraph("<font color='#dc2626'><b>!</b></font>", ParagraphStyle("lgnok", parent=center, fontSize=11, leading=11)), Paragraph("<b>NOK</b> – Mangel festgestellt", small)],
         [Paragraph("<font color='#64748b'><b>—</b></font>", ParagraphStyle("lgnf", parent=center, fontSize=11, leading=11)), Paragraph("<b>nicht ausgeführt</b>", small)],
     ]
-    legend_table=Table(legend_cells, colWidths=[12*mm,76*mm], rowHeights=[9*mm,7.5*mm,7.5*mm,7.5*mm], hAlign="CENTER")
+    legend_table=Table(legend_cells, colWidths=[12*mm,76*mm], rowHeights=[7.5*mm,6.2*mm,6.2*mm,6.2*mm], hAlign="CENTER")
     legend_table.setStyle(TableStyle([
         ("SPAN",(0,0),(-1,0)),
         ("BOX",(0,0),(-1,-1),0.6,colors.black),
@@ -623,7 +623,7 @@ def make_pdf(mid):
     ]))
 
     abbrev_cells=[
-        [Paragraph("<b>Abkürzungen</b>", ParagraphStyle("abbrevtitle", parent=small, fontName="Helvetica-Bold", fontSize=7.2, leading=8)), ""],
+        [Paragraph("<b>Abkürzungen</b>", ParagraphStyle("abbrevtitle", parent=small, fontName="Helvetica-Bold", fontSize=7.0, leading=7.5)), ""],
         [Paragraph("<b>ZT:</b>",small), Paragraph("Zimmerterminal",small)],
         [Paragraph("<b>ZL:</b>",small), Paragraph("Zimmerlampe",small)],
         [Paragraph("<b>RT B1:</b>",small), Paragraph("Ruftaster Bett 1",small)],
@@ -635,7 +635,7 @@ def make_pdf(mid):
         [Paragraph("<b>ZT Bad:</b>",small), Paragraph("Zugtaster Bad",small)],
         [Paragraph("<b>AT Bad:</b>",small), Paragraph("Abstelltaster Bad",small)],
     ]
-    abbrev_table=Table(abbrev_cells, colWidths=[25*mm,63*mm], rowHeights=[9*mm]+[6.5*mm]*10, hAlign="CENTER")
+    abbrev_table=Table(abbrev_cells, colWidths=[25*mm,63*mm], rowHeights=[7.5*mm]+[5.5*mm]*10, hAlign="CENTER")
     abbrev_table.setStyle(TableStyle([
         ("SPAN",(0,0),(-1,0)),
         ("BOX",(0,0),(-1,-1),0.6,colors.black),
