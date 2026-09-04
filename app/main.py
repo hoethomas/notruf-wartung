@@ -519,7 +519,7 @@ class NumberedCanvas(canvas.Canvas):
     def draw_page_number(self, page_count):
         self.saveState()
         self.setFont("Helvetica", 7)
-        self.drawRightString(198*mm, 9*mm, f"Seite {self._pageNumber}/{page_count}")
+        self.drawRightString(198*mm, 7*mm, f"Seite {self._pageNumber}/{page_count}")
         self.restoreState()
 
 
@@ -546,7 +546,7 @@ def make_pdf(mid):
     c.close()
     if not m: raise ValueError("Wartung nicht gefunden")
     out = io.BytesIO()
-    doc = SimpleDocTemplate(out, pagesize=A4, rightMargin=7*mm, leftMargin=7*mm, topMargin=6*mm, bottomMargin=6*mm)
+    doc = SimpleDocTemplate(out, pagesize=A4, rightMargin=7*mm, leftMargin=7*mm, topMargin=6*mm, bottomMargin=16*mm)
     styles = getSampleStyleSheet()
     title = ParagraphStyle("title", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=13, leading=15, alignment=1)
     subtitle = ParagraphStyle("subtitle", parent=styles["Normal"], fontName="Helvetica", fontSize=6.2, leading=7, alignment=1, spaceBefore=1)
@@ -602,7 +602,7 @@ def make_pdf(mid):
         [Paragraph("<font color='#dc2626'><b>!</b></font>", ParagraphStyle("lgnok", parent=center, fontSize=11, leading=11)), Paragraph("<b>NOK</b> – Mangel festgestellt", small)],
         [Paragraph("<font color='#64748b'><b>—</b></font>", ParagraphStyle("lgnf", parent=center, fontSize=11, leading=11)), Paragraph("<b>nicht ausgeführt</b>", small)],
     ]
-    legend_table=Table(legend_cells, colWidths=[12*mm,76*mm])
+    legend_table=Table(legend_cells, colWidths=[12*mm,76*mm], hAlign="CENTER")
     legend_table.setStyle(TableStyle([
         ("BOX",(0,0),(-1,-1),0.6,colors.black),("INNERGRID",(0,0),(-1,-1),0.3,colors.black),
         ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ALIGN",(0,0),(0,-1),"CENTER"),
@@ -622,17 +622,17 @@ def make_pdf(mid):
         [Paragraph("<b>ZT Bad:</b>",small), Paragraph("Zugtaster Bad",small)],
         [Paragraph("<b>AT Bad:</b>",small), Paragraph("Abstelltaster Bad",small)],
     ]
-    abbrev_table=Table(abbrev_cells, colWidths=[25*mm,63*mm])
+    abbrev_table=Table(abbrev_cells, colWidths=[25*mm,63*mm], hAlign="CENTER")
     abbrev_table.setStyle(TableStyle([
         ("BOX",(0,0),(-1,-1),0.6,colors.black),("INNERGRID",(0,0),(-1,-1),0.3,colors.black),
         ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
         ("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),2),("BOTTOMPADDING",(0,0),(-1,-1),2)
     ]))
     legend_left=Table([[legend_title],[legend_table]],colWidths=[94*mm])
-    legend_left.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.6,colors.black),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eeeeee")),("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3)]))
+    legend_left.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.6,colors.black),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eeeeee")),("LEFTPADDING",(0,0),(-1,-1),0),("RIGHTPADDING",(0,0),(-1,-1),0),("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3)]))
     abbrev_title=Paragraph("<b>Abkürzungen</b>", ParagraphStyle("abbrevtitle", parent=small, fontName="Helvetica-Bold", fontSize=7.2, leading=8))
     legend_right=Table([[abbrev_title],[abbrev_table]],colWidths=[94*mm])
-    legend_right.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.6,colors.black),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eeeeee")),("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3)]))
+    legend_right.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.6,colors.black),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eeeeee")),("LEFTPADDING",(0,0),(-1,-1),0),("RIGHTPADDING",(0,0),(-1,-1),0),("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3)]))
     combined_legend=Table([[legend_left,legend_right]],colWidths=[96*mm,96*mm])
     combined_legend.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(-1,-1),0),("RIGHTPADDING",(0,0),(-1,-1),0),("TOPPADDING",(0,0),(-1,-1),0),("BOTTOMPADDING",(0,0),(-1,-1),0)]))
     story.append(combined_legend); story.append(Spacer(1,3*mm))
@@ -782,7 +782,10 @@ def add_room(request:Request,mid:int,room_name:str=Form(...)):
     if not require_user(request):return RedirectResponse("/login",303)
     room_name=room_name.strip()
     if room_name:
-        c=db();c.execute("INSERT INTO results(maintenance_id,room_name,manual) VALUES(?,?,1)",(mid,room_name));c.commit();c.close()
+        c=db();m=c.execute("SELECT status FROM maintenances WHERE id=?",(mid,)).fetchone()
+        if not m or m["status"] == "completed":
+            c.close();return RedirectResponse(f"/maintenance/{mid}",303)
+        c.execute("INSERT INTO results(maintenance_id,room_name,manual) VALUES(?,?,1)",(mid,room_name));c.commit();c.close()
     return RedirectResponse(f"/maintenance/{mid}",303)
 
 @app.post("/maintenance/{mid}/complete")
@@ -791,13 +794,15 @@ async def maintenance_complete(request:Request,mid:int):
     form=await request.form();sig=(form.get("signature") or "").strip();inspector=(form.get("inspector_name") or "").strip();year=form.get("inspection_year") or None; inspection_type=(form.get("inspection_type") or "").strip()
     if not sig or not sig.startswith("data:image"):
         return RedirectResponse(f"/maintenance/{mid}?error=Bitte+Unterschrift+setzen",303)
-    c=db();exists=c.execute("SELECT id FROM maintenances WHERE id=?",(mid,)).fetchone()
+    c=db();exists=c.execute("SELECT id,status FROM maintenances WHERE id=?",(mid,)).fetchone()
     if not exists:c.close();return RedirectResponse("/",303)
+    if exists["status"] == "completed":
+        c.close();return RedirectResponse(f"/maintenance/{mid}?error=Diese+Überprüfung+ist+bereits+abgeschlossen+und+gesperrt",303)
     save_results_from_form(c,mid,form)
     completed=datetime.now().isoformat(timespec="seconds")
     if inspection_type not in INSPECTION_TITLES: inspection_type="Wartung"
     c.execute("UPDATE maintenances SET inspector_name=?,inspection_year=?,inspection_type=?,status='completed',completed_at=?,signature=? WHERE id=?",(inspector,year,inspection_type,completed,sig,mid));c.commit();c.close()
-    pdf=make_pdf(mid);pdf_bytes=pdf.getvalue();filename=f"Zusammenfassung_Rufanlagenwartung_{mid}.pdf";path=PROTOCOL_DIR/filename;path.write_bytes(pdf_bytes)
+    pdf=make_pdf(mid);pdf_bytes=pdf.getvalue();filename=f"Zusammenfassung_Rufanlagen{'inspektion' if inspection_type=='Inspektion' else ('instandhaltung' if inspection_type=='Instandhaltung' else 'wartung')}_{mid}.pdf";path=PROTOCOL_DIR/filename;path.write_bytes(pdf_bytes)
     c=db();c.execute("UPDATE maintenances SET pdf_path=? WHERE id=?",(str(path),mid));c.commit();c.close()
     return RedirectResponse(f"/maintenance/{mid}/completed",303)
 
@@ -811,4 +816,4 @@ def maintenance_completed(request:Request,mid:int):
 @app.get("/maintenance/{mid}/pdf")
 def maintenance_pdf(request:Request,mid:int):
     if not require_user(request):return RedirectResponse("/login",303)
-    pdf=make_pdf(mid);return StreamingResponse(pdf,media_type="application/pdf",headers={"Content-Disposition":f'inline; filename="Zusammenfassung_Rufanlagenwartung_{mid}.pdf"'})
+    pdf=make_pdf(mid);return StreamingResponse(pdf,media_type="application/pdf",headers={"Content-Disposition":f'inline; filename="Zusammenfassung_Rufanlagen{'inspektion' if (m["inspection_type"] or "Wartung")=="Inspektion" else ('instandhaltung' if (m["inspection_type"] or "Wartung")=="Instandhaltung" else 'wartung')}_{mid}.pdf"'})
