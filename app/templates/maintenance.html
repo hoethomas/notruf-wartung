@@ -1,58 +1,92 @@
-{% extends "base.html" %}{% block content %}
-<div class="actions"><a href="/" class="btn secondary">← Übersicht</a><a class="btn" href="/maintenance/{{m.id}}/pdf" target="_blank">PDF anzeigen</a></div>
-<div class="card"><h1>{{m.inspection_type or "Wartung"}}</h1><p><b>Haus:</b> {{m.hauscode}} · <b>Station:</b> {{m.station}} · <b>Status:</b> {{"abgeschlossen und gesperrt" if m.status=="completed" else "offen"}}</p>{% if request.query_params.get('error') %}<p class="error-text">{{request.query_params.get('error')}}</p>{% endif %}{% if m.status=="completed" %}<p class="success-text">Diese Überprüfung ist abgeschlossen. Protokoll und Prüfdaten sind gesperrt und können nicht mehr verändert werden.</p>{% endif %}</div>
-{% if m.status != "completed" %}
-<form method="post" action="/maintenance/{{m.id}}/save" id="maintenanceForm">
-<div class="grid card"><label>Name des Prüfers<input name="inspector_name" value="{{m.inspector_name or m.display_name}}" required></label><label>Überprüfung für das Jahr:<select name="inspection_year" required>{% for y in years %}<option value="{{y}}" {% if m.inspection_year==y %}selected{% endif %}>{{y}}</option>{% endfor %}</select></label><label>Art der Überprüfung:<select name="inspection_type" required><option value="Inspektion" {% if m.inspection_type=="Inspektion" %}selected{% endif %}>Inspektion</option><option value="Wartung" {% if m.inspection_type=="Wartung" or not m.inspection_type %}selected{% endif %}>Wartung</option><option value="Instandhaltung" {% if m.inspection_type=="Instandhaltung" %}selected{% endif %}>Instandhaltung</option></select></label></div>
-<div class="card scroll maintenance-table-card">
-<div class="mobile-maintenance-app">
-  <div class="mobile-room-overview" id="mobileRoomOverview">
-    <div class="mobile-app-title"><b>Zimmerübersicht</b><span id="mobileProgressText">0 von {{rows|length}} Zimmer</span></div>
-    <div class="mobile-progress"><div id="mobileProgressBar"></div></div>
-    <input class="mobile-room-search" id="mobileRoomSearch" type="search" placeholder="⌕  Zimmer suchen ..." oninput="filterMobileRooms()">
-    <div id="mobileRoomList">
-    {% for r in rows %}<button type="button" class="mobile-room-card" data-room-id="{{r.id}}" data-room-name="{{r.room_name|lower}}" onclick="openMobileRoom({{r.id}})">
-      <span class="mobile-room-main"><b>{{r.room_name}}</b>{% if r.manual %}<small>manuell</small>{% endif %}<span>{{checks|length}} Komponenten</span></span>
-      <span class="mobile-room-counts"><i class="count-ok">✓ <b>0</b></i><i class="count-nok">! <b>0</b></i><i class="count-nf">— <b>0</b></i><strong>›</strong></span>
-    </button>{% endfor %}
-    </div>
-  </div>
-  <div class="mobile-room-editor" id="mobileRoomEditor" hidden>
-    <div class="mobile-editor-head"><button type="button" class="mobile-nav-btn" onclick="prevMobileRoom()">‹</button><div><b id="mobileEditorRoomName">Zimmer</b><span id="mobileEditorPosition">1 von {{rows|length}}</span></div><button type="button" class="mobile-nav-btn" onclick="nextMobileRoom()">›</button></div>
-    <button type="button" class="mobile-back-link" onclick="closeMobileRoom()">← Zimmerübersicht</button>
-    <div id="mobileComponents"></div>
-    <button type="button" class="btn mobile-next-btn" onclick="nextMobileRoom()">Nächstes Zimmer →</button>
-    <button type="button" class="btn secondary mobile-prev-btn" onclick="prevMobileRoom()">← Vorheriges Zimmer</button>
-  </div>
-</div>
-<table class="maintenance-table"><tr><th>Bezeichnung</th>{% for c in checks %}<th>{{c[1]}}</th>{% endfor %}</tr>
-{% for r in rows %}<tr><td><b>{{r.room_name}}</b>{% if r.manual %}<span class="manual"> manuell</span>{% endif %}</td>
-{% for key,label,options in checks %}<td data-component="{{label}}"><div class="check">{% for opt in options %}<label class="status-btn status-{{ 'nf' if opt=='NF' else opt|lower }}" title="{{ 'nicht ausgeführt' if opt=='NF' else opt }}"><input type="radio" name="{{key}}_{{r.id}}" value="{{opt}}" {% if r[key]==opt %}checked{% endif %} onchange="checkNok('{{r.id}}','{{key}}',this.checked)"><span class="status-icon">{{ '✓' if opt=='OK' else ('!' if opt=='NOK' else '—') }}</span><span class="sr-only">{{ 'nicht ausgeführt' if opt=='NF' else opt }}</span></label>{% endfor %}</div></td>{% endfor %}</tr>
-<tr id="detailrow_{{r.id}}" class="detail-row"><td colspan="{{checks|length+1}}"><div id="details_{{r.id}}"></div><input type="hidden" name="details_{{r.id}}" id="detailinput_{{r.id}}" value="{{r.issue_details or '{}'}}"></td></tr>{% endfor %}</table></div>
-<button class="btn" type="submit">Zwischenspeichern</button></form>
-{% endif %}
-{% if m.status != "completed" %}<div class="card"><h2>Zimmer manuell hinzufügen</h2><form method="post" action="/maintenance/{{m.id}}/add-room" class="inline-form"><input name="room_name" placeholder="Zimmerbezeichnung eingeben" required><button class="btn" type="submit">Zimmer hinzufügen</button></form><p class="mini">Das Zimmer wird nur zu dieser Wartung hinzugefügt.</p></div>{% endif %}
-{% if m.status != "completed" %}<div class="card"><h2>Wartung abschließen</h2><p class="mini">Beim Abschluss werden die Daten gespeichert. Das Abschlussdatum entspricht dem Zeitpunkt, an dem die Unterschrift gesetzt und die Wartung abgeschlossen wird.</p>
-<canvas id="sig" class="signature" width="700" height="220"></canvas>
-<form method="post" action="/maintenance/{{m.id}}/complete" id="completeForm" onsubmit="return saveSig()"><input type="hidden" id="signature" name="signature"><input type="hidden" id="completeInspector" name="inspector_name"><input type="hidden" id="completeYear" name="inspection_year"><input type="hidden" id="completeType" name="inspection_type"><br><button class="btn success" type="submit">Wartung abschließen</button><button type="button" class="btn secondary" onclick="clearSig()">Unterschrift löschen</button></form></div>{% else %}<div class="card"><h2>Überprüfung abgeschlossen und gesperrt</h2><p class="mini">Die Unterschrift wurde gesetzt und die Überprüfung am {{m.completed_at[:10] if m.completed_at else ""}} abgeschlossen. Eine nachträgliche Änderung ist nicht möglich.</p></div>{% endif %}
-{% if m.status != "completed" %}<script>
-const checkLabels={{checks|map(attribute=0)|list|tojson}},checkNames={{checks|map(attribute=1)|list|tojson}},checkOptions={{checks|map(attribute=2)|list|tojson}},mobileRooms=[{% for r in rows %}{id:{{r.id}},name:{{r.room_name|tojson}}}{% if not loop.last %},{% endif %}{% endfor %}],details={};
-let mobileCurrent=-1;
-function mobileStatus(rid,key){const rs=document.querySelectorAll('input[name="'+key+'_'+rid+'"]');let v='';rs.forEach(x=>{if(x.checked)v=x.value});return v}
-function mobileCounts(rid){let ok=0,nok=0,nf=0;checkLabels.forEach(k=>{let v=mobileStatus(rid,k);if(v==='OK')ok++;else if(v==='NOK')nok++;else if(v==='NF')nf++});return [ok,nok,nf]}
-function updateMobileRoomCard(rid){const card=document.querySelector('.mobile-room-card[data-room-id="'+rid+'"]');if(!card)return;const c=mobileCounts(rid);card.querySelector('.count-ok b').textContent=c[0];card.querySelector('.count-nok b').textContent=c[1];card.querySelector('.count-nf b').textContent=c[2]}
-function updateMobileProgress(){let done=0;mobileRooms.forEach(r=>{let c=mobileCounts(r.id);if(c[0]+c[1]+c[2]===checkLabels.length)done++});const total=mobileRooms.length,p=total?Math.round(done/total*100):0;document.getElementById('mobileProgressText').textContent=done+' von '+total+' Zimmer';document.getElementById('mobileProgressBar').style.width=p+'%';mobileRooms.forEach(r=>updateMobileRoomCard(r.id))}
-function renderMobileComponents(rid){const box=document.getElementById('mobileComponents');const room=mobileRooms.find(r=>r.id===rid);if(!box||!room)return;document.getElementById('mobileEditorRoomName').textContent=room.name;document.getElementById('mobileEditorPosition').textContent=(mobileRooms.findIndex(r=>r.id===rid)+1)+' von '+mobileRooms.length;box.innerHTML='';checkLabels.forEach((key,i)=>{const row=document.createElement('div');row.className='mobile-component-row';const label=document.createElement('div');label.className='mobile-component-label';label.innerHTML='<b>'+checkNames[i]+'</b><span>'+({'ZT':'Zimmerterminal','ZL':'Zimmerlampe','RT B1':'Ruftaster Bett 1','RT B2':'Ruftaster Bett 2','RT B3':'Ruftaster Bett 3','RT':'Ruftaster','PT Bad':'Pneumatischer Taster im Bad','RT Bad':'Ruftaster Bad','ZT Bad':'Zugtaster Bad','AT Bad':'Abstelltaster Bad'}[checkNames[i]]||'')+'</span>';row.appendChild(label);const actions=document.createElement('div');actions.className='mobile-status-actions';const opts=checkOptions[i];opts.forEach(opt=>{const src=document.querySelector('input[name="'+key+'_'+rid+'"][value="'+opt+'"]');const lab=document.createElement('label');lab.className='mobile-status-btn status-'+(opt==='NF'?'nf':opt.toLowerCase());lab.innerHTML='<input type="radio" name="mobile_'+key+'_'+rid+'" value="'+opt+'"><span>'+(opt==='OK'?'✓':opt==='NOK'?'!':'—')+'</span>';const inp=lab.querySelector('input');inp.checked=!!src&&src.checked;inp.addEventListener('change',()=>{if(src){src.checked=true;src.dispatchEvent(new Event('change',{bubbles:true}))}updateMobileProgress();renderMobileDetails(rid)});actions.appendChild(lab)});row.appendChild(actions);box.appendChild(row)});renderMobileDetails(rid)}
-function renderMobileDetails(rid){const box=document.getElementById('mobileComponents');if(!box)return;let existing=box.querySelector('.mobile-nok-details');if(existing)existing.remove();let parts=[];checkLabels.forEach((key,i)=>{if(mobileStatus(rid,key)==='NOK'){const safe=(details[rid]&&details[rid][key])||'';parts.push('<div class="nok-detail mobile-nok-details"><label><b>'+checkNames[i]+' – Details zum Mangel</b></label><textarea rows="2" data-rid="'+rid+'" data-key="'+key+'" placeholder="Bitte Mangel beschreiben...">'+escapeHtml(safe)+'</textarea></div>')}});if(parts.length){const d=document.createElement('div');d.innerHTML=parts.join('');box.appendChild(d);d.querySelectorAll('textarea').forEach(t=>t.addEventListener('input',()=>{details[rid]=details[rid]||{};details[rid][t.dataset.key]=t.value;syncDetails(rid)}))}}
-function openMobileRoom(rid){mobileCurrent=mobileRooms.findIndex(r=>r.id===rid);document.getElementById('mobileRoomOverview').hidden=true;document.getElementById('mobileRoomEditor').hidden=false;renderMobileComponents(rid);window.scrollTo({top:0,behavior:'smooth'})}
-function closeMobileRoom(){document.getElementById('mobileRoomEditor').hidden=true;document.getElementById('mobileRoomOverview').hidden=false;updateMobileProgress()}
-function nextMobileRoom(){if(mobileCurrent<mobileRooms.length-1){mobileCurrent++;renderMobileComponents(mobileRooms[mobileCurrent].id);window.scrollTo({top:0,behavior:'smooth'})}}
-function prevMobileRoom(){if(mobileCurrent>0){mobileCurrent--;renderMobileComponents(mobileRooms[mobileCurrent].id);window.scrollTo({top:0,behavior:'smooth'})}}
-function filterMobileRooms(){const q=(document.getElementById('mobileRoomSearch').value||'').toLowerCase();document.querySelectorAll('.mobile-room-card').forEach(c=>c.style.display=c.dataset.roomName.includes(q)?'flex':'none')}
-const checkLabels={{checks|map(attribute=0)|list|tojson}},checkNames={{checks|map(attribute=1)|list|tojson}},details={};{% for r in rows %}try{details[{{r.id}}]={{r.issue_details or '{}'}}||{}}catch(e){details[{{r.id}}]={}}{% endfor %}
-function checkNok(rid,key){let radios=document.querySelectorAll('input[name="'+key+'_'+rid+'"]'),v='';radios.forEach(x=>{if(x.checked)v=x.value});if(v==='NOK'){details[rid]=details[rid]||{};if(details[rid][key]===undefined)details[rid][key]=''}else if(details[rid])delete details[rid][key];renderDetails(rid)}
-function renderDetails(rid){const box=document.getElementById('details_'+rid);if(!box)return;let parts=[];checkLabels.forEach((key,i)=>{let rs=document.querySelectorAll('input[name="'+key+'_'+rid+'"]'),v='';rs.forEach(x=>{if(x.checked)v=x.value});if(v==='NOK'){let safe=(details[rid]&&details[rid][key])||'';parts.push('<div class="nok-detail"><label><b>'+checkNames[i]+' – Details zum Mangel</b></label><textarea rows="2" data-rid="'+rid+'" data-key="'+key+'" placeholder="Bitte Mangel beschreiben...">'+escapeHtml(safe)+'</textarea></div>')}});box.innerHTML=parts.join('');box.querySelectorAll('textarea').forEach(t=>t.addEventListener('input',()=>{details[rid]=details[rid]||{};details[rid][t.dataset.key]=t.value;syncDetails(rid)}));document.getElementById('detailrow_'+rid).style.display=parts.length?'table-row':'none';syncDetails(rid)}
-function syncDetails(rid){let clean={};if(details[rid])Object.keys(details[rid]).forEach(k=>{if(details[rid][k]&&details[rid][k].trim())clean[k]=details[rid][k].trim()});document.getElementById('detailinput_'+rid).value=JSON.stringify(clean)}
-function escapeHtml(s){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}{% for r in rows %}renderDetails({{r.id}});{% endfor %}updateMobileProgress();
-const c=document.getElementById('sig'),x=c.getContext('2d');x.lineWidth=2;x.lineCap='round';let down=false,last=null;function pos(e){const r=c.getBoundingClientRect(),t=e.touches?e.touches[0]:e;return{x:(t.clientX-r.left)*c.width/r.width,y:(t.clientY-r.top)*c.height/r.height}}function start(e){down=true;last=pos(e);e.preventDefault()}function move(e){if(!down)return;const p=pos(e);x.beginPath();x.moveTo(last.x,last.y);x.lineTo(p.x,p.y);x.stroke();last=p;e.preventDefault()}function end(){down=false}c.addEventListener('mousedown',start);c.addEventListener('mousemove',move);window.addEventListener('mouseup',end);c.addEventListener('touchstart',start,{passive:false});c.addEventListener('touchmove',move,{passive:false});c.addEventListener('touchend',end);function clearSig(){x.clearRect(0,0,c.width,c.height)}function saveSig(){const f=document.getElementById('completeForm');f.querySelectorAll('.carry').forEach(e=>e.remove());document.querySelectorAll('#maintenanceForm input[type=radio]:checked').forEach(r=>{const h=document.createElement('input');h.type='hidden';h.name=r.name;h.value=r.value;h.className='carry';f.appendChild(h)});document.querySelectorAll('#maintenanceForm input[type=hidden][name^="details_"]').forEach(r=>{const h=document.createElement('input');h.type='hidden';h.name=r.name;h.value=r.value;h.className='carry';f.appendChild(h)});document.getElementById('signature').value=c.toDataURL('image/png');document.getElementById('completeInspector').value=document.querySelector('[name="inspector_name"]').value;document.getElementById('completeYear').value=document.querySelector('[name="inspection_year"]').value;document.getElementById('completeType').value=document.querySelector('[name="inspection_type"]').value;return true}
-</script>{% endif %}{% endblock %}
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title or "Notrufanlagen Wartung" }}</title>
+<style>
+:root{font-family:Arial,sans-serif;color:#172033;background:#f5f7fa}
+body{margin:0}.top{background:#172033;color:#fff;padding:14px 22px;display:flex;justify-content:space-between;align-items:center}
+.wrap{max-width:1200px;margin:24px auto;padding:0 16px}.card{background:white;border-radius:12px;padding:18px;margin-bottom:18px;box-shadow:0 2px 10px #0000000d}
+h1,h2{margin-top:0}.btn{display:inline-block;border:0;border-radius:8px;padding:11px 15px;background:#2563eb;color:white;text-decoration:none;cursor:pointer}.btn.secondary{background:#64748b}.btn.success{background:#16a34a}.btn.danger{background:#dc2626}
+input,select{padding:10px;border:1px solid #cbd5e1;border-radius:7px;font-size:16px;width:100%;box-sizing:border-box}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid #e5e7eb;padding:9px;text-align:left;font-size:14px}th{background:#f1f5f9}
+.status{padding:5px 9px;border-radius:99px;font-size:12px}.ok{background:#dcfce7}.nok{background:#fee2e2}.nf{background:#e2e8f0}
+.check{display:flex;gap:6px;justify-content:center;align-items:center}.check input{position:absolute;opacity:0;pointer-events:none}.status-btn{width:42px;height:42px;border:1px solid #cbd5e1;border-radius:10px;padding:0;cursor:pointer;background:#fff;display:flex;align-items:center;justify-content:center;box-sizing:border-box;transition:.15s ease;position:relative}.status-icon{font-size:22px;font-weight:700;line-height:1}.status-btn.status-ok .status-icon{color:#16a34a}.status-btn.status-nok .status-icon{color:#dc2626}.status-btn.status-nf .status-icon{color:#64748b}.status-btn:has(input:checked){transform:scale(1.04);box-shadow:0 0 0 2px currentColor}.status-btn.status-ok:has(input:checked){background:#dcfce7;border-color:#16a34a;color:#16a34a}.status-btn.status-nok:has(input:checked){background:#fee2e2;border-color:#dc2626;color:#dc2626}.status-btn.status-nf:has(input:checked){background:#e2e8f0;border-color:#64748b;color:#475569}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.mini{font-size:12px;color:#64748b}.manual{font-size:10px;color:#2563eb}.inline-form{display:flex;gap:10px;align-items:center}.inline-form input{flex:1}.success-text{color:#15803d}.error-text{color:#b91c1c}.actions{display:flex;gap:8px;flex-wrap:wrap}
+.signature{border:2px dashed #94a3b8;border-radius:8px;background:#fff;max-width:500px;width:100%;touch-action:none}.detail-row{display:none;background:#fff7ed}.detail-row td{padding:10px}.nok-detail{margin:6px 0}.nok-detail textarea{width:100%;box-sizing:border-box;padding:9px;border:1px solid #f59e0b;border-radius:7px;font:inherit;resize:vertical}
+
+.mobile-maintenance-intro{display:none}
+@media(max-width:700px){
+  .mobile-room-overview[hidden],.mobile-room-editor[hidden]{display:none!important}
+
+  .wrap{margin:10px auto;padding:0 10px}
+  .top{padding:12px 14px;font-size:14px}
+  .actions .btn{font-size:14px;padding:10px 12px}
+  .maintenance-table-card{padding:10px;background:transparent;box-shadow:none}
+  .mobile-maintenance-app{display:block}
+  .maintenance-table-card>.maintenance-table{display:none!important}
+  .mobile-room-overview{display:block}
+  .mobile-app-title{display:flex;justify-content:space-between;align-items:end;padding:4px 4px 10px;font-size:18px}
+  .mobile-app-title span{font-size:13px;color:#64748b;font-weight:600}
+  .mobile-progress{height:8px;background:#e2e8f0;border-radius:99px;overflow:hidden;margin:0 4px 12px}
+  .mobile-progress>div{height:100%;width:0;background:#16a34a;border-radius:99px;transition:width .2s ease}
+  .mobile-room-search{margin:0 0 10px;width:100%;height:48px;border:1px solid #cbd5e1;border-radius:12px;background:#fff;padding:0 14px;font-size:16px;box-sizing:border-box}
+  #mobileRoomList{display:flex;flex-direction:column;gap:8px}
+  .mobile-room-card{width:100%;border:1px solid #e5e7eb;background:#fff;border-radius:14px;padding:12px 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;text-align:left;box-shadow:0 2px 8px #0000000b;color:#172033}
+  .mobile-room-card:active{transform:scale(.99)}
+  .mobile-room-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .mobile-room-main b{font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mobile-room-main span,.mobile-room-main small{font-size:11px;color:#64748b}
+  .mobile-room-counts{display:flex;align-items:center;gap:8px;white-space:nowrap}
+  .mobile-room-counts i{font-style:normal;font-size:13px}
+  .mobile-room-counts .count-ok{color:#16a34a}.mobile-room-counts .count-nok{color:#dc2626}.mobile-room-counts .count-nf{color:#64748b}
+  .mobile-room-counts strong{font-size:28px;font-weight:400;color:#64748b;line-height:1}
+  .mobile-room-editor{background:#fff;border-radius:14px;padding:10px 4px 4px}
+  .mobile-editor-head{display:grid;grid-template-columns:46px 1fr 46px;align-items:center;text-align:center;margin-bottom:6px}
+  .mobile-editor-head>div{display:flex;flex-direction:column;gap:2px}.mobile-editor-head b{font-size:20px}.mobile-editor-head span{font-size:12px;color:#64748b}
+  .mobile-nav-btn{width:44px;height:44px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;font-size:30px;color:#172033}
+  .mobile-back-link{border:0;background:none;color:#2563eb;padding:6px 0 10px;font-size:14px}
+  .mobile-component-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;padding:9px 2px;border-bottom:1px solid #eef2f7;min-height:58px;box-sizing:border-box}
+  .mobile-component-label{display:flex;flex-direction:column;gap:2px;min-width:0}.mobile-component-label b{font-size:16px}.mobile-component-label span{font-size:11px;color:#64748b;line-height:1.2}
+  .mobile-status-actions{display:flex;gap:6px}.mobile-status-btn{width:48px;height:48px;border:1px solid #cbd5e1;border-radius:12px;background:#fff;display:flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer}
+  .mobile-status-btn input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}.mobile-status-btn>span{font-size:25px;font-weight:700;line-height:1}
+  .mobile-status-btn.status-ok>span{color:#16a34a}.mobile-status-btn.status-nok>span{color:#dc2626}.mobile-status-btn.status-nf>span{color:#64748b}
+  .mobile-status-btn:has(input:checked){transform:scale(1.04)}.mobile-status-btn.status-ok:has(input:checked){background:#dcfce7;border:3px solid #16a34a}.mobile-status-btn.status-nok:has(input:checked){background:#fee2e2;border:3px solid #dc2626}.mobile-status-btn.status-nf:has(input:checked){background:#e2e8f0;border:3px solid #64748b}
+  .mobile-nok-details{margin:10px 0;padding:10px;background:#fff7ed;border-radius:10px}
+  .mobile-next-btn,.mobile-prev-btn{width:100%;margin-top:10px;text-align:center}
+  .mobile-prev-btn{margin-bottom:4px}
+  .maintenance-table-card .scroll{overflow:visible}
+  .mobile-maintenance-intro{display:flex;flex-direction:column;gap:4px;margin:0 0 10px;padding:12px 14px;background:#fff;border-radius:12px;box-shadow:0 2px 10px #0000000d}
+  .mobile-maintenance-intro b{font-size:18px}
+  .mobile-maintenance-intro span{font-size:12px;color:#64748b}
+  .maintenance-table{display:block;width:100%}
+  .maintenance-table thead,.maintenance-table>tbody>tr:first-child{display:none}
+  .maintenance-table>tbody{display:block}
+  .maintenance-table>tbody>tr:not(.detail-row){display:block;background:#fff;border-radius:14px;margin:0 0 12px;padding:10px 12px;box-shadow:0 2px 10px #0000000d;border:1px solid #e5e7eb}
+  .maintenance-table>tbody>tr:not(.detail-row)>td{border:0;padding:6px 0;font-size:14px;box-sizing:border-box}
+  .maintenance-table>tbody>tr:not(.detail-row)>td:first-child{display:block;font-size:18px;font-weight:700;padding:4px 0 10px;border-bottom:1px solid #e5e7eb;margin-bottom:4px}
+  .maintenance-table>tbody>tr:not(.detail-row)>td:not(:first-child){display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;border-bottom:1px solid #eef2f7;min-height:54px}
+  .maintenance-table>tbody>tr:not(.detail-row)>td:not(:first-child)::before{content:attr(data-component);font-weight:700;color:#172033;white-space:normal}
+  .maintenance-table>tbody>tr:not(.detail-row)>td:last-child{border-bottom:0}
+  .maintenance-table .check{justify-content:flex-end;gap:7px}
+  .maintenance-table .status-btn{width:48px;height:48px;border-radius:12px}
+  .maintenance-table .status-icon{font-size:25px}
+  .maintenance-table .detail-row{display:none;background:#fff7ed}
+  .maintenance-table .detail-row td{display:block!important;border:0!important;padding:10px!important}
+  .scroll{overflow:visible}
+  .grid{grid-template-columns:1fr;gap:12px}
+  input,select{font-size:17px;min-height:48px}
+  .card{padding:14px;margin-bottom:14px}
+  .signature{max-width:100%;height:auto}
+  .btn{min-height:46px}
+}
+@media(min-width:701px){.mobile-maintenance-intro{display:none}.mobile-maintenance-app{display:none}}
+
+</style>
+</head>
+<body>
+<div class="top"><b>Notrufanlagen Wartung</b>{% if user %}<span>{{ user.display_name }} · <a style="color:white" href="/logout">Abmelden</a></span>{% endif %}</div>
+<div class="wrap">{% block content %}{% endblock %}</div>
+</body>
+</html>
