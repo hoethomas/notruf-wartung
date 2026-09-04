@@ -1,0 +1,18 @@
+{% extends "base.html" %}{% block content %}
+<div class="actions" style="justify-content:space-between"><div><a class="btn secondary" href="/admin">← Administration</a></div><div>{% if m.status=='completed' %}<a class="btn" href="/maintenance/{{m.id}}/pdf" target="_blank">📄 PDF öffnen</a>{% endif %}</div></div>
+<div class="card admin-detail-head">
+  <div><h1>{{m.inspection_type or 'Wartung'}} #{{m.id}}</h1><p><b>Haus:</b> {{m.hauscode}} &nbsp;·&nbsp; <b>Station:</b> {{m.station}}</p><p class="mini"><b>Techniker:</b> {{m.display_name}} &nbsp;·&nbsp; <b>Prüfer:</b> {{m.inspector_name or m.display_name}} &nbsp;·&nbsp; <b>Jahr:</b> {{m.inspection_year}}</p></div>
+  <div class="admin-detail-status"><span class="status {% if m.status=='completed' %}ok{% else %}nf{% endif %}">{{'ABGESCHLOSSEN' if m.status=='completed' else 'IN BEARBEITUNG'}}</span>{% if m.completed_at %}<small>Abschluss: {{m.completed_at[:10][8:10]}}.{{m.completed_at[:10][5:7]}}.{{m.completed_at[:10][0:4]}}</small>{% endif %}</div>
+</div>
+<div class="admin-detail-stats">
+ <div><span>Fortschritt</span><strong>{{checked}} / {{total}}</strong><small>{{pct}} % der Zimmer vollständig</small></div>
+ <div><span>OK / geprüft</span><strong>{{checked}}</strong><small>vollständig ausgefüllte Zimmer</small></div>
+ <div><span>NOK</span><strong class="admin-nok">{{nok}}</strong><small>Zimmer mit mindestens einem Mangel</small></div>
+</div>
+<div class="card">
+<h2>Prüfergebnisse</h2>
+<div class="admin-table-wrap"><table class="admin-table result-table"><thead><tr><th>Zimmer</th>{% for key,label,opts in checks %}<th>{{label}}</th>{% endfor %}<th>Mangeldetails</th></tr></thead><tbody>
+{% for r in rows %}<tr><td><b>{{r.room_name}}</b>{% if r.manual %}<div class="mini">manuell ergänzt</div>{% endif %}</td>{% for key,label,opts in checks %}<td>{% set v=r[key] %}<span class="result-pill {% if v=='OK' %}r-ok{% elif v=='NOK' %}r-nok{% elif v=='NF' %}r-nf{% endif %}">{{'✓' if v=='OK' else ('!' if v=='NOK' else ('—' if v=='NF' else '·'))}}</span></td>{% endfor %}<td>{% if r.issue_details %}<span class="issue-text">{{r.issue_details}}</span>{% else %}<span class="mini">—</span>{% endif %}</td></tr>{% else %}<tr><td colspan="12">Keine Zimmerdaten vorhanden.</td></tr>{% endfor %}
+</tbody></table></div></div>
+{% if m.signature %}<div class="card"><h2>Digitale Unterschrift</h2><img src="{{m.signature}}" alt="Unterschrift" class="admin-signature"></div>{% endif %}
+{% endblock %}

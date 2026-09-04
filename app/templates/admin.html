@@ -1,0 +1,56 @@
+{% extends "base.html" %}{% block content %}
+<div class="actions admin-head">
+  <div><h1>Administration</h1><p class="mini">Zentrale Übersicht über Benutzer und alle durchgeführten bzw. laufenden Wartungen.</p></div>
+  <div class="actions"><a class="btn" href="/users">👤 Benutzerverwaltung</a><a class="btn secondary" href="/logout">Abmelden</a></div>
+</div>
+
+<div class="admin-stats">
+  <div class="admin-stat"><span>Benutzer</span><strong>{{users_count or 0}}</strong><small>aktive Benutzer</small></div>
+  <div class="admin-stat"><span>Wartungen gesamt</span><strong>{{stats.total or 0}}</strong><small>alle Prüfungen</small></div>
+  <div class="admin-stat"><span>Laufend</span><strong>{{stats.open_count or 0}}</strong><small>in Bearbeitung</small></div>
+  <div class="admin-stat"><span>Abgeschlossen</span><strong>{{stats.completed_count or 0}}</strong><small>fertige Protokolle</small></div>
+</div>
+
+<div class="card">
+  <div class="admin-toolbar">
+    <div><h2 style="margin-bottom:4px">Wartungsübersicht</h2><span class="mini">Wer hat welche Wartung durchgeführt, wie weit ist sie und welches Protokoll gehört dazu?</span></div>
+    <input id="adminSearch" class="admin-search" placeholder="Suchen: Techniker, Haus, Station …" oninput="filterAdmin()">
+  </div>
+  <div class="admin-filter-row">
+    <select id="statusFilter" onchange="filterAdmin()"><option value="">Alle Status</option><option value="open">In Bearbeitung</option><option value="completed">Abgeschlossen</option></select>
+    <select id="typeFilter" onchange="filterAdmin()"><option value="">Alle Prüfungsarten</option><option>Inspektion</option><option>Wartung</option><option>Instandhaltung</option></select>
+  </div>
+  <div class="admin-table-wrap">
+  <table id="adminTable" class="admin-table">
+    <thead><tr><th>Datum</th><th>Techniker</th><th>Haus</th><th>Station</th><th>Art</th><th>Fortschritt</th><th>NOK</th><th>Status</th><th>Dokument</th></tr></thead>
+    <tbody>
+    {% for m in maintenances %}
+      {% set total=m.total_rooms or 0 %}{% set checked=m.checked_rooms or 0 %}{% set pct=((checked*100/total)|round|int) if total else 0 %}
+      <tr data-status="{{m.status}}" data-type="{{m.inspection_type or 'Wartung'}}" data-search="{{(m.display_name ~ ' ' ~ m.hauscode ~ ' ' ~ m.station ~ ' ' ~ (m.inspection_type or 'Wartung'))|lower}}">
+        <td>{{(m.created_at or '')[:16].replace('T',' ')}}</td>
+        <td><b>{{m.display_name}}</b>{% if m.inspector_name and m.inspector_name != m.display_name %}<div class="mini">Prüfer: {{m.inspector_name}}</div>{% endif %}</td>
+        <td><b>{{m.hauscode}}</b></td><td>{{m.station}}</td><td>{{m.inspection_type or 'Wartung'}}</td>
+        <td style="min-width:150px"><b>{{checked}} / {{total}} Zimmer</b><div class="admin-progress"><span style="width:{{pct}}%"></span></div><small>{{pct}} %</small></td>
+        <td><span class="admin-nok">{{m.nok_rooms or 0}}</span>{% if m.nok_components %}<div class="mini">{{m.nok_components}} Komponenten</div>{% endif %}</td>
+        <td><span class="status {% if m.status=='completed' %}ok{% else %}nf{% endif %}">{{'abgeschlossen' if m.status=='completed' else 'in Bearbeitung'}}</span>{% if m.status!='completed' and m.updated_at %}<div class="mini">{{m.updated_at[:16].replace('T',' ')}}</div>{% endif %}</td>
+        <td class="admin-actions"><a class="btn secondary" href="/admin/maintenance/{{m.id}}">Ansehen</a>{% if m.status=='completed' %}<a class="btn" href="/maintenance/{{m.id}}/pdf" target="_blank">📄 PDF</a>{% endif %}</td>
+      </tr>
+    {% else %}<tr><td colspan="9">Noch keine Wartungen vorhanden.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p id="noAdminResults" class="mini" style="display:none">Keine passenden Wartungen gefunden.</p>
+</div>
+<script>
+function filterAdmin(){
+ const q=(document.getElementById('adminSearch').value||'').toLowerCase().trim();
+ const st=document.getElementById('statusFilter').value; const ty=document.getElementById('typeFilter').value;
+ let visible=0;
+ document.querySelectorAll('#adminTable tbody tr[data-status]').forEach(r=>{
+   const ok=(!q||r.dataset.search.includes(q))&&(!st||r.dataset.status===st)&&(!ty||r.dataset.type===ty);
+   r.style.display=ok?'':'none'; if(ok)visible++;
+ });
+ document.getElementById('noAdminResults').style.display=visible?'none':'block';
+}
+</script>
+{% endblock %}
