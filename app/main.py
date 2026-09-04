@@ -104,6 +104,16 @@ def init_db():
         created_at TEXT NOT NULL,
         FOREIGN KEY(user_id) REFERENCES users(id)
     );
+    CREATE TABLE IF NOT EXISTS config_stations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        config_id INTEGER NOT NULL,
+        hauscode TEXT NOT NULL,
+        house_display TEXT NOT NULL,
+        stationsbezeichnung TEXT NOT NULL,
+        station_type TEXT,
+        room_count INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY(config_id) REFERENCES imported_configs(id)
+    );
     CREATE TABLE IF NOT EXISTS config_records (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         config_id INTEGER NOT NULL,
@@ -196,56 +206,247 @@ def active_records(request):
     return [dict(r) for r in rows]
 
 def active_houses(request):
-    # Preserve the exact designation extracted from the VCIP; no shortening in the UI.
     seen={}
-    for r in active_records(request): seen[r["hauscode"]]=r["house_display"]
+    cid=get_active_config_id(request)
+    if cid:
+        c=db(); rows=c.execute("SELECT hauscode,house_display FROM config_stations WHERE config_id=?",(cid,)).fetchall(); c.close()
+        for r in rows: seen[r["hauscode"]]=r["house_display"]
+    if not seen:
+        for r in active_records(request): seen[r["hauscode"]]=r["house_display"]
     return sorted([(k,v) for k,v in seen.items()], key=lambda x:x[1].lower())
 
-def parse_vcip_bytes(data: bytes):
-    with zipfile.ZipFile(io.BytesIO(data)) as z:
-        names=z.namelist(); xml_name="data/data.xml" if "data/data.xml" in names else next((n for n in names if n.lower().endswith(".xml")),None)
-        if not xml_name: raise ValueError("Keine XML-Daten in der VCIP-Datei gefunden.")
-        root=ET.fromstring(z.read(xml_name))
-    config_name=""
-    for n in root.iter("_logicalConfig"):
-        for x in n:
-            if x.tag=="_name" and x.text and x.text.strip(): config_name=x.text.strip(); break
-        if config_name: break
-    parents={child:parent for parent in root.iter() for child in parent}
-    by_ref={x.attrib.get("refid"):x for x in root.iter() if x.attrib.get("refid")}
-    records=[]
-    for rooms_node in root.iter("_rooms"):
-        station_node=parents.get(rooms_node); ward_node=parents.get(station_node) if station_node is not None else None
-        if station_node is None: continue
-        station_names=[x.text.strip() for x in station_node.iter() if x.tag=="_full" and x.text and x.text.strip()]
-        station=station_names[0] if station_names else ""
-        if not station: continue
-        # In the VCIP files used here the house designation is the leading designation of the station name.
-        # Keep it exactly as present; do not truncate it in storage or display.
-        house=station.split()[0] if station.split() else station
-        if not house: continue
-        for ref_node in rooms_node:
-            ref=ref_node.attrib.get("refid")
-            if not ref: continue
-            room_obj=by_ref.get(ref)
-            if room_obj is None: continue
-            names_found=[x.text.strip() for x in room_obj.iter() if x.tag=="_full" and x.text and x.text.strip()]
-            if names_found:
-                records.append({"hauscode":house,"house_display":house,"stationsbezeichnung":station,"zimmerbezeichnung":names_found[0]})
-    unique=[];seen=set()
-    for r in records:
-        key=(r["hauscode"],r["house_display"],r["stationsbezeichnung"],r["zimmerbezeichnung"])
-        if key not in seen: seen.add(key); unique.append(r)
-    if not unique: raise ValueError("Die VCIP-Datei enthält keine erkennbaren Stationen/Zimmer.")
-    return config_name, unique
+def active_stations(request, hauscode):
+    cid=get_active_config_id(request)
+    if not cid: return []
+    c=db(); rows=c.execute("SELECT stationsbezeichnung,station_type,room_count FROM config_stations WHERE config_id=? AND hauscode=? ORDER BY stationsbezeichnung",(cid,hauscode)).fetchall(); c.close()
+    if rows: return [dict(r) for r in rows]
+    return [{"stationsbezeichnung":s,"station_type":"","room_count":len(get_rooms(hauscode,s,request))} for s in sorted({r["stationsbezeichnung"] for r in active_records(request) if r["hauscode"]==hauscode})]
 
-def save_import_for_user(request, filename, config_name, records):
+def _element_full_name(node):
+    """Return the object's own _name/_full, including inherited base objects."""
+    if node is None:
+        return ""
+    name = node.find("./_name/_full")
+    if name is not None and name.text and name.text.strip():
+        return name.text.strip()
+    for base in node.findall("./base"):
+        found = _element_full_name(base)
+        if found:
+            return found
+    return ""
+
+
+def _resolve_ref(node, by_refid):
+    """Resolve a ref/refid node while protecting against broken/cyclic references."""
+    seen = set()
+    cur = node
+    while cur is not None:
+        rid = cur.attrib.get("refid")
+        ref = cur.attrib.get("ref")
+        if rid and rid in by_refid and rid not in seen:
+            seen.add(rid)
+            cur = by_refid[rid]
+            continue
+        if ref and ref in by_refid and ref not in seen:
+            seen.add(ref)
+            cur = by_refid[ref]
+            continue
+        return cur
+    return None
+
+
+def _find_descendant(node, tag):
+    """Find a property through base chains, not arbitrary nested room/device data."""
+    direct = node.find(f"./{tag}")
+    if direct is not None:
+        return direct
+    for base in node.findall("./base"):
+        found = _find_descendant(base, tag)
+        if found is not None:
+            return found
+    return None
+
+
+def _get_rooms_node(ward):
+    return _find_descendant(ward, "_rooms")
+
+
+def _collect_room_objects(rooms_node, by_refid, seen_objects=None):
+    """Recursively collect actual room objects from inline entries and references."""
+    if seen_objects is None:
+        seen_objects = set()
+    result = []
+    if rooms_node is None:
+        return result
+    for child in list(rooms_node):
+        obj = _resolve_ref(child, by_refid)
+        if obj is None:
+            continue
+        rid = obj.attrib.get("refid") or child.attrib.get("ref") or child.attrib.get("refid")
+        key = rid or id(obj)
+        if key in seen_objects:
+            continue
+        seen_objects.add(key)
+
+        # A real room object has a _name/_full. Do not descend into its
+        # technical substructures, otherwise device names become rooms.
+        if _element_full_name(obj):
+            result.append(obj)
+            continue
+
+        # Some VCIP versions wrap room groups/lists. Resolve those recursively.
+        nested = _find_descendant(obj, "_rooms")
+        if nested is not None:
+            result.extend(_collect_room_objects(nested, by_refid, seen_objects))
+    return result
+
+
+def _collect_ward_entries(wards_node, by_refid):
+    """Resolve every ward entry in the logicalConfig._wards list exactly once."""
+    result = []
+    seen = set()
+    for entry in list(wards_node) if wards_node is not None else []:
+        ward = _resolve_ref(entry, by_refid)
+        if ward is None:
+            continue
+        # Walk base inheritance: e.g. Billroth 1 is typeid 176 with base typeid 7.
+        name = _element_full_name(ward) or _element_full_name(_find_descendant(ward, "base") or ward)
+        if not name:
+            continue
+        rid = ward.attrib.get("refid") or entry.attrib.get("ref") or entry.attrib.get("refid")
+        key = rid or (ward.attrib.get("typeid"), name)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(ward)
+    return result
+
+
+def parse_vcip_bytes(data: bytes):
+    """Parse VCIP using the actual logical hierarchy: project -> wards -> rooms.
+
+    Areas are intentionally ignored. References and inherited Ward structures are
+    resolved before deduplication so a station such as Fellinger 2 cannot appear twice.
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            bad = z.testzip()
+            if bad:
+                raise ValueError(f"Beschädigte VCIP-Datei (fehlerhaftes ZIP-Element: {bad}).")
+            names = z.namelist()
+            xml_name = "data/data.xml" if "data/data.xml" in names else next((n for n in names if n.lower().endswith(".xml")), None)
+            if not xml_name:
+                raise ValueError("Keine XML-Daten in der VCIP-Datei gefunden.")
+            root = ET.fromstring(z.read(xml_name))
+    except zipfile.BadZipFile as e:
+        raise ValueError("Die VCIP-Datei ist keine gültige ZIP/VCIP-Datei oder ist beschädigt.") from e
+    except ET.ParseError as e:
+        raise ValueError("Die XML-Daten der VCIP-Datei sind beschädigt oder ungültig.") from e
+
+    logical = next((e for e in root.iter() if e.tag == "_logicalConfig"), None)
+    if logical is None:
+        raise ValueError("Keine logische VCIP-Konfiguration (_logicalConfig) gefunden.")
+
+    config_name = ""
+    name_node = logical.find("./_name")
+    if name_node is not None and name_node.text and name_node.text.strip():
+        config_name = name_node.text.strip()
+    if not config_name:
+        config_name = _element_full_name(logical)
+    if not config_name:
+        raise ValueError("Kein Projekt-/Hausname in der VCIP-Konfiguration gefunden.")
+
+    by_refid = {x.attrib.get("refid"): x for x in root.iter() if x.attrib.get("refid")}
+    wards_node = logical.find("./_wards")
+    wards = _collect_ward_entries(wards_node, by_refid)
+    if not wards:
+        raise ValueError("Die VCIP-Datei enthält keine erkennbaren Stationen.")
+
+    station_objects = []
+    station_seen = set()
+    for ward in wards:
+        station = _element_full_name(ward)
+        if not station:
+            continue
+        station_id = ward.attrib.get("refid") or station
+        if station_id in station_seen:
+            continue
+        station_seen.add(station_id)
+        base_type = ward.attrib.get("typeid") or ""
+        if base_type != "7":
+            for base in ward.iter("base"):
+                if base.attrib.get("typeid") == "7":
+                    base_type = "7"
+                    break
+        station_objects.append({"id":station_id,"name":station,"typeid":base_type,"ward":ward})
+
+    # KWP-style projects use a three-character house code at the start of
+    # practically every station name. Other learned configurations use the
+    # exact logical project name as the house. Detect that structural pattern
+    # instead of hard-coding customer/project names.
+    import re
+    coded = [w["name"].split()[0] for w in station_objects if re.match(r"^[A-Z0-9]{3}$", w["name"].split()[0] if w["name"].split() else "")]
+    use_station_prefix_house = bool(station_objects) and len(coded) / len(station_objects) >= 0.80
+    records = []
+    station_meta = []
+    for info in station_objects:
+        station = info["name"]
+        first = station.split()[0] if station.split() else station
+        house = first if use_station_prefix_house else config_name
+        rooms_node = _get_rooms_node(info["ward"])
+        rooms = _collect_room_objects(rooms_node, by_refid)
+        station_meta.append({"hauscode":house,"house_display":house,"stationsbezeichnung":station,"station_type":({"7":"VCIP","176":"VCIP","163":"VC+ Hybrid","170":"VC+ Hybrid"}.get(info["typeid"],"Unbekannt")),"room_count":len(rooms)})
+        room_seen = set()
+        for room in rooms:
+            room_name = _element_full_name(room)
+            if not room_name:
+                continue
+            room_id = room.attrib.get("refid") or room_name
+            if room_id in room_seen:
+                continue
+            room_seen.add(room_id)
+            records.append({
+                "hauscode": config_name,
+                "house_display": config_name,
+                "stationsbezeichnung": station,
+                "zimmerbezeichnung": room_name,
+            })
+
+    if not records and not station_meta:
+        raise ValueError("Die VCIP-Datei enthält keine erkennbaren Stationen/Zimmer.")
+
+    # Merge identical station labels within the same house. Some VCIP versions
+    # contain multiple Ward objects with the same visible station name; they
+    # represent one selectable station and their room lists are combined.
+    merged_stations = {}
+    for st in station_meta:
+        key = (st["hauscode"], st["stationsbezeichnung"])
+        if key not in merged_stations:
+            merged_stations[key] = dict(st)
+        else:
+            merged_stations[key]["room_count"] += st.get("room_count", 0)
+            if merged_stations[key].get("station_type") != st.get("station_type"):
+                merged_stations[key]["station_type"] = "Gemischt"
+    station_meta = list(merged_stations.values())
+
+    # Final defensive deduplication by semantic hierarchy.
+    unique = []
+    seen = set()
+    for r in records:
+        key = (r["hauscode"], r["stationsbezeichnung"], r["zimmerbezeichnung"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(r)
+    return config_name, unique, station_meta
+
+def save_import_for_user(request, filename, config_name, records, station_meta):
     u=current_user(request); now=datetime.now().isoformat(timespec="seconds")
     c=db()
     old=request.session.get("config_id")
     if old:
-        c.execute("DELETE FROM config_records WHERE config_id=?",(old,)); c.execute("DELETE FROM imported_configs WHERE id=? AND user_id=?",(old,u["id"]))
+        c.execute("DELETE FROM config_records WHERE config_id=?",(old,)); c.execute("DELETE FROM config_stations WHERE config_id=?",(old,)); c.execute("DELETE FROM imported_configs WHERE id=? AND user_id=?",(old,u["id"]))
     cur=c.execute("INSERT INTO imported_configs(user_id,filename,config_name,created_at) VALUES(?,?,?,?)",(u["id"],filename,config_name,now)); cid=cur.lastrowid
+    c.executemany("INSERT INTO config_stations(config_id,hauscode,house_display,stationsbezeichnung,station_type,room_count) VALUES(?,?,?,?,?,?)",[(cid,s["hauscode"],s["house_display"],s["stationsbezeichnung"],s.get("station_type",""),s.get("room_count",0)) for s in station_meta])
     c.executemany("INSERT INTO config_records(config_id,hauscode,house_display,stationsbezeichnung,zimmerbezeichnung) VALUES(?,?,?,?,?)",[(cid,r["hauscode"],r["house_display"],r["stationsbezeichnung"],r["zimmerbezeichnung"]) for r in records])
     c.commit();c.close();request.session["config_id"]=cid
     return cid
@@ -372,7 +573,7 @@ def import_page(request: Request):
     cid=get_active_config_id(request)
     if cid: cfg=c.execute("SELECT * FROM imported_configs WHERE id=?",(cid,)).fetchone()
     c.close()
-    return TEMPLATES.TemplateResponse("import.html", {"request":request,"user":u,"config":cfg,"record_count":len(active_records(request))})
+    return TEMPLATES.TemplateResponse("import.html", {"request":request,"user":u,"config":cfg,"record_count":len(active_records(request)),"station_count":len(active_stations(request, active_houses(request)[0][0])) if active_houses(request) else 0})
 
 @app.post("/import/vcip-file")
 async def import_vcip_file(request: Request, file_upload: UploadFile = File(...)):
@@ -380,8 +581,8 @@ async def import_vcip_file(request: Request, file_upload: UploadFile = File(...)
     if not u: return RedirectResponse("/login",303)
     data=await file_upload.read()
     try:
-        config_name,records=parse_vcip_bytes(data)
-        save_import_for_user(request,file_upload.filename or "config.vcip",config_name,records)
+        config_name,records,station_meta=parse_vcip_bytes(data)
+        save_import_for_user(request,file_upload.filename or "config.vcip",config_name,records,station_meta)
         return RedirectResponse(f"/import?success={len(records)}",303)
     except Exception as e:
         return RedirectResponse("/import?error="+str(e).replace(" ","+"),303)
