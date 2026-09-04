@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block content %}
-<div class="actions maintenance-actions"><a href="/" class="btn secondary">← Übersicht</a>{% if m.status != "completed" %}<button class="btn" type="submit" form="maintenanceForm">Zwischenspeichern</button>{% endif %}<a class="btn" href="/maintenance/{{m.id}}/pdf" target="_blank">PDF anzeigen</a></div>
+<div class="actions maintenance-actions"><a href="/" class="btn secondary" id="overviewLink" onclick="return leaveMaintenanceToOverview(event)">← Übersicht</a>{% if m.status != "completed" %}<button class="btn" type="submit" form="maintenanceForm">Zwischenspeichern</button>{% endif %}<a class="btn" href="/maintenance/{{m.id}}/pdf" target="_blank">PDF anzeigen</a></div>
 <div class="card"><h1>{{m.inspection_type or "Wartung"}}</h1><p><b>Haus:</b> {{m.hauscode}} · <b>Station:</b> {{m.station}} · <b>Status:</b> {{"abgeschlossen und gesperrt" if m.status=="completed" else "offen"}}</p>{% if request.query_params.get('error') %}<p class="error-text">{{request.query_params.get('error')}}</p>{% endif %}{% if m.status != "completed" and m.updated_at %}<p class="mini">Zuletzt gespeichert: {{m.updated_at[:16].replace("T"," ")}} Uhr</p>{% endif %}{% if m.status=="completed" %}<p class="success-text">Diese Überprüfung ist abgeschlossen. Protokoll und Prüfdaten sind gesperrt und können nicht mehr verändert werden.</p>{% endif %}</div>
 {% if m.status != "completed" %}
 <form method="post" action="/maintenance/{{m.id}}/save" id="maintenanceForm">
@@ -83,19 +83,39 @@ function scheduleMobileSave(){
   clearTimeout(mobileSaveTimer);
   mobileSaveTimer=setTimeout(saveMobileProgress,500);
 }
-async function saveMobileProgress(){
-  if(mobileSaveInFlight)return;
+async function saveMobileProgress(force=false){
+  if(mobileSaveInFlight){
+    if(force){
+      while(mobileSaveInFlight){await new Promise(resolve=>setTimeout(resolve,50));}
+    }else{return;}
+  }
   const form=document.getElementById('maintenanceForm');
   const state=document.getElementById('mobileSaveStatus');
+  if(!form)return false;
   if(state)state.textContent='Speichert…';
-  if(!form)return;
   try{
     mobileSaveInFlight=true;
     const fd=new FormData(form);
-    const r=await fetch(form.action,{method:'POST',body:fd,credentials:'same-origin',redirect:'follow',headers:{'X-Requested-With':'XMLHttpRequest'}});
-    if(!r.ok){if(state)state.textContent='Speichern fehlgeschlagen';console.warn('Speichern fehlgeschlagen',r.status)}else{if(state)state.textContent='✓ Gespeichert'}}
-  catch(e){if(state)state.textContent='Speichern fehlgeschlagen';console.warn('Speichern fehlgeschlagen',e)}
-  finally{mobileSaveInFlight=false}
+    const r=await fetch(form.action,{method:'POST',body:fd,credentials:'same-origin',redirect:'manual',headers:{'X-Requested-With':'XMLHttpRequest'}});
+    const ok=r.ok || r.type==='opaqueredirect' || (r.status>=300 && r.status<400);
+    if(!ok){if(state)state.textContent='Speichern fehlgeschlagen';console.warn('Speichern fehlgeschlagen',r.status);return false;}
+    if(state)state.textContent='✓ Gespeichert';
+    return true;
+  }catch(e){
+    if(state)state.textContent='Speichern fehlgeschlagen';
+    console.warn('Speichern fehlgeschlagen',e);
+    return false;
+  }finally{mobileSaveInFlight=false;}
+}
+async function leaveMaintenanceToOverview(e){
+  e.preventDefault();
+  clearTimeout(mobileSaveTimer);
+  const saved=await saveMobileProgress(true);
+  if(!saved){
+    if(!confirm('Der aktuelle Stand konnte nicht bestätigt gespeichert werden. Trotzdem zur Übersicht wechseln?')) return false;
+  }
+  window.location.href='/';
+  return false;
 }
 function setMobileStatus(rid,key,value){
   if(!mobileState[rid])mobileState[rid]={};
