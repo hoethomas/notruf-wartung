@@ -5,5 +5,5 @@
 {% if request.query_params.get('success') %}<p class="success-text">Import erfolgreich: {{request.query_params.get('success')}} Zimmer übernommen.</p>{% endif %}
 {% if request.query_params.get('error') %}<p class="error-text">Importfehler: {{request.query_params.get('error')}}</p>{% endif %}
 <form method="post" action="/import/vcip-file" enctype="multipart/form-data"><label>VCIP-Datei<input type="file" name="file_upload" accept=".vcip,application/zip" required></label><br><button class="btn success" type="submit">VCIP laden und Prüfliste erstellen</button></form></div>
-{% if config %}<div class="card"><h2>Aktive Konfiguration</h2><p><b>Datei:</b> {{config.filename}}</p><p><b>Konfigurationsname:</b> {{config.config_name or '—'}}</p><p><b>Zimmerdatensätze:</b> {{record_count}}</p><p class="mini">Eine neue VCIP-Datei ersetzt diese Konfiguration für neue Wartungen.</p></div>{% endif %}
+{% if config %}<div class="card"><h2>Aktive Konfiguration</h2><p><b>Datei:</b> {{config.filename}}</p><p><b>Konfigurationsname:</b> {{config.config_name or '—'}}</p><p><b>Stationen:</b> {{station_count}} &nbsp; | &nbsp; <b>Zimmerdatensätze:</b> {{record_count}}</p><p class="mini">Eine neue VCIP-Datei ersetzt diese Konfiguration für neue Wartungen.</p></div>{% endif %}
 {% endblock %}
