@@ -7,7 +7,7 @@
 <div class="card scroll maintenance-table-card">
 <div class="mobile-maintenance-app">
   <div class="mobile-room-overview" id="mobileRoomOverview">
-    <div class="mobile-app-title"><b>Zimmerübersicht</b><span id="mobileProgressText">0 von {{rows|length}} Zimmer</span></div>
+    <div class="mobile-app-title"><b>Zimmerübersicht</b><span><span id="mobileProgressText">0 von {{rows|length}} Zimmer</span><small id="mobileSaveStatus" class="mobile-save-status">Bereit</small></span></div>
     <div class="mobile-progress"><div id="mobileProgressBar"></div></div>
     <input class="mobile-room-search" id="mobileRoomSearch" type="search" placeholder="⌕  Zimmer suchen ..." oninput="filterMobileRooms()">
     <div id="mobileRoomList">
@@ -36,28 +36,175 @@
 <canvas id="sig" class="signature" width="700" height="220"></canvas>
 <form method="post" action="/maintenance/{{m.id}}/complete" id="completeForm" onsubmit="return saveSig()"><input type="hidden" id="signature" name="signature"><input type="hidden" id="completeInspector" name="inspector_name"><input type="hidden" id="completeYear" name="inspection_year"><input type="hidden" id="completeType" name="inspection_type"><br><button class="btn success" type="submit">Wartung abschließen</button><button type="button" class="btn secondary" onclick="clearSig()">Unterschrift löschen</button></form></div>{% else %}<div class="card"><h2>Überprüfung abgeschlossen und gesperrt</h2><p class="mini">Die Unterschrift wurde gesetzt und die Überprüfung am {{m.completed_at[:10] if m.completed_at else ""}} abgeschlossen. Eine nachträgliche Änderung ist nicht möglich.</p></div>{% endif %}
 {% if m.status != "completed" %}<script>
-const checkLabels={{checks|map(attribute=0)|list|tojson}},checkNames={{checks|map(attribute=1)|list|tojson}},checkOptions={{checks|map(attribute=2)|list|tojson}},mobileRooms=[{% for r in rows %}{id:{{r.id}},name:{{r.room_name|tojson}}}{% if not loop.last %},{% endif %}{% endfor %}],details={};
-let mobileCurrent=-1;
+const checkLabels={{checks|map(attribute=0)|list|tojson}};
+const checkNames={{checks|map(attribute=1)|list|tojson}};
+const checkOptions={{checks|map(attribute=2)|list|tojson}};
+const mobileRooms=[{% for r in rows %}{id:{{r.id}},name:{{r.room_name|tojson}}}{% if not loop.last %},{% endif %}{% endfor %}];
+const details={};
 const mobileState={};
-{% for r in rows %}mobileState[{{r.id}}]={};{% for key,label,options in checks %}mobileState[{{r.id}}][{{key|tojson}}]={{r[key]|tojson}};{% endfor %}{% endfor %}
+let mobileCurrent=-1;
+let mobileSaveTimer=null;
+
+{% for r in rows %}
+mobileState[{{r.id}}]={};
+{% for key,label,options in checks %}mobileState[{{r.id}}][{{key|tojson}}]={{r[key]|tojson}};{% endfor %}
+try{details[{{r.id}}]={{r.issue_details or '{}'}}||{}}catch(e){details[{{r.id}}]={}}
+{% endfor %}
+
 function mobileStatus(rid,key){return mobileState[rid]&&mobileState[rid][key] ? mobileState[rid][key] : ''}
-function mobileCounts(rid){let ok=0,nok=0,nf=0;checkLabels.forEach(k=>{const v=mobileStatus(rid,k);if(v==='OK')ok++;else if(v==='NOK')nok++;else if(v==='NF')nf++});return [ok,nok,nf]}
-function updateMobileRoomCard(rid){const card=document.querySelector('.mobile-room-card[data-room-id="'+rid+'"]');if(!card)return;const c=mobileCounts(rid);card.querySelector('.count-ok b').textContent=c[0];card.querySelector('.count-nok b').textContent=c[1];card.querySelector('.count-nf b').textContent=c[2]}
-function updateMobileProgress(){let done=0;mobileRooms.forEach(r=>{const c=mobileCounts(r.id);if(c[0]+c[1]+c[2]===checkLabels.length)done++});const total=mobileRooms.length,p=total?Math.round(done/total*100):0;const txt=document.getElementById('mobileProgressText'),bar=document.getElementById('mobileProgressBar');if(txt)txt.textContent=done+' von '+total+' Zimmer';if(bar)bar.style.width=p+'%';mobileRooms.forEach(r=>updateMobileRoomCard(r.id))}
-function syncMobileToForm(rid,key,value){const radios=document.querySelectorAll('input[name="'+key+'_'+rid+'"]');radios.forEach(r=>r.checked=(r.value===value));const selected=document.querySelector('input[name="'+key+'_'+rid+'"]:checked');if(selected)selected.dispatchEvent(new Event('change',{bubbles:true}))}
-function renderMobileComponents(rid){const box=document.getElementById('mobileComponents'),room=mobileRooms.find(r=>r.id===rid);if(!box||!room)return;const name=document.getElementById('mobileEditorRoomName'),pos=document.getElementById('mobileEditorPosition');if(name)name.textContent=room.name;if(pos)pos.textContent=(mobileRooms.findIndex(r=>r.id===rid)+1)+' von '+mobileRooms.length;box.innerHTML='';checkLabels.forEach((key,i)=>{const row=document.createElement('div');row.className='mobile-component-row';const label=document.createElement('div');label.className='mobile-component-label';label.innerHTML='<b>'+checkNames[i]+'</b><span>'+({'ZT':'Zimmerterminal','ZL':'Zimmerlampe','RT B1':'Ruftaster Bett 1','RT B2':'Ruftaster Bett 2','RT B3':'Ruftaster Bett 3','RT':'Ruftaster','PT Bad':'Pneumatischer Taster im Bad','RT Bad':'Ruftaster Bad','ZT Bad':'Zugtaster Bad','AT Bad':'Abstelltaster Bad'}[checkNames[i]]||'')+'</span>';row.appendChild(label);const actions=document.createElement('div');actions.className='mobile-status-actions';checkOptions[i].forEach(opt=>{const lab=document.createElement('label');lab.className='mobile-status-btn status-'+(opt==='NF'?'nf':opt.toLowerCase());lab.dataset.rid=rid;lab.dataset.key=key;lab.dataset.value=opt;lab.innerHTML='<input type="radio" name="mobile_'+key+'_'+rid+'" value="'+opt+'"><span>'+(opt==='OK'?'✓':opt==='NOK'?'!':'—')+'</span>';const inp=lab.querySelector('input');inp.checked=(mobileStatus(rid,key)===opt);actions.appendChild(lab)});row.appendChild(actions);box.appendChild(row)});renderMobileDetails(rid)}
-function renderMobileDetails(rid){const box=document.getElementById('mobileComponents');if(!box)return;box.querySelectorAll('.mobile-nok-details').forEach(e=>e.remove());let parts=[];checkLabels.forEach((key,i)=>{if(mobileStatus(rid,key)==='NOK'){const safe=(details[rid]&&details[rid][key])||'';parts.push('<div class="nok-detail mobile-nok-details"><label><b>'+checkNames[i]+' – Details zum Mangel</b></label><textarea rows="2" data-rid="'+rid+'" data-key="'+key+'" placeholder="Bitte Mangel beschreiben...">'+escapeHtml(safe)+'</textarea></div>')}});if(parts.length){const d=document.createElement('div');d.innerHTML=parts.join('');box.appendChild(d);d.querySelectorAll('textarea').forEach(t=>t.addEventListener('input',()=>{details[rid]=details[rid]||{};details[rid][t.dataset.key]=t.value;syncDetails(rid)}))}}
-function openMobileRoom(rid){const idx=mobileRooms.findIndex(r=>r.id===rid);if(idx<0)return;mobileCurrent=idx;const overview=document.getElementById('mobileRoomOverview'),editor=document.getElementById('mobileRoomEditor');if(!overview||!editor)return;overview.classList.add('mobile-hidden');editor.classList.remove('mobile-hidden');renderMobileComponents(rid);window.scrollTo({top:0,behavior:'smooth'})}
-function closeMobileRoom(){const editor=document.getElementById('mobileRoomEditor'),overview=document.getElementById('mobileRoomOverview');if(editor)editor.classList.add('mobile-hidden');if(overview)overview.classList.remove('mobile-hidden');updateMobileProgress()}
+function mobileCounts(rid){
+  let ok=0,nok=0,nf=0;
+  checkLabels.forEach(k=>{const v=mobileStatus(rid,k);if(v==='OK')ok++;else if(v==='NOK')nok++;else if(v==='NF')nf++});
+  return [ok,nok,nf];
+}
+function updateMobileRoomCard(rid){
+  const card=document.querySelector('.mobile-room-card[data-room-id="'+rid+'"]');
+  if(!card)return;
+  const c=mobileCounts(rid);
+  const ok=card.querySelector('.count-ok b'),nok=card.querySelector('.count-nok b'),nf=card.querySelector('.count-nf b');
+  if(ok)ok.textContent=c[0]; if(nok)nok.textContent=c[1]; if(nf)nf.textContent=c[2];
+}
+function updateMobileProgress(){
+  let done=0;
+  mobileRooms.forEach(r=>{const c=mobileCounts(r.id);if(c[0]+c[1]+c[2]===checkLabels.length)done++});
+  const total=mobileRooms.length;
+  const p=total?Math.round(done/total*100):0;
+  const txt=document.getElementById('mobileProgressText'),bar=document.getElementById('mobileProgressBar');
+  if(txt)txt.textContent=done+' von '+total+' Zimmer';
+  if(bar)bar.style.width=p+'%';
+  mobileRooms.forEach(r=>updateMobileRoomCard(r.id));
+}
+function syncMobileToDesktop(rid,key,value){
+  const radio=document.querySelector('input[name="'+key+'_'+rid+'"][value="'+value+'"]');
+  if(radio){radio.checked=true;radio.dispatchEvent(new Event('change',{bubbles:true}))}
+}
+function scheduleMobileSave(){
+  clearTimeout(mobileSaveTimer);
+  mobileSaveTimer=setTimeout(saveMobileProgress,500);
+}
+async function saveMobileProgress(){
+  const form=document.getElementById('maintenanceForm');
+  const state=document.getElementById('mobileSaveStatus');
+  if(state)state.textContent='Speichert…';
+  if(!form)return;
+  try{
+    const fd=new FormData(form);
+    const r=await fetch(form.action,{method:'POST',body:fd,credentials:'same-origin',redirect:'follow',headers:{'X-Requested-With':'XMLHttpRequest'}});
+    if(!r.ok){if(state)state.textContent='Speichern fehlgeschlagen';console.warn('Speichern fehlgeschlagen',r.status)}else{if(state)state.textContent='✓ Gespeichert'}}
+  catch(e){if(state)state.textContent='Speichern fehlgeschlagen';console.warn('Speichern fehlgeschlagen',e)}
+}
+function setMobileStatus(rid,key,value){
+  if(!mobileState[rid])mobileState[rid]={};
+  mobileState[rid][key]=value;
+  syncMobileToDesktop(rid,key,value);
+  if(value==='NOK'){
+    details[rid]=details[rid]||{};
+    if(details[rid][key]===undefined)details[rid][key]='';
+  }else if(details[rid]){
+    delete details[rid][key];
+  }
+  syncDetails(rid);
+  updateMobileProgress();
+  renderMobileComponents(rid);
+  scheduleMobileSave();
+}
+function renderMobileComponents(rid){
+  const box=document.getElementById('mobileComponents'),room=mobileRooms.find(r=>r.id===rid);
+  if(!box||!room)return;
+  const name=document.getElementById('mobileEditorRoomName'),pos=document.getElementById('mobileEditorPosition');
+  if(name)name.textContent=room.name;
+  if(pos)pos.textContent=(mobileRooms.findIndex(r=>r.id===rid)+1)+' von '+mobileRooms.length;
+  box.innerHTML='';
+  checkLabels.forEach((key,i)=>{
+    const row=document.createElement('div');row.className='mobile-component-row';
+    const label=document.createElement('div');label.className='mobile-component-label';
+    const descriptions={'ZT':'Zimmerterminal','ZL':'Zimmerlampe','RT B1':'Ruftaster Bett 1','RT B2':'Ruftaster Bett 2','RT B3':'Ruftaster Bett 3','RT':'Ruftaster','PT Bad':'Pneumatischer Taster im Bad','RT Bad':'Ruftaster Bad','ZT Bad':'Zugtaster Bad','AT Bad':'Abstelltaster Bad'};
+    label.innerHTML='<b>'+escapeHtml(checkNames[i])+'</b><span>'+escapeHtml(descriptions[checkNames[i]]||'')+'</span>';
+    row.appendChild(label);
+    const actions=document.createElement('div');actions.className='mobile-status-actions';
+    checkOptions[i].forEach(opt=>{
+      const btn=document.createElement('button');
+      btn.type='button';btn.className='mobile-status-btn status-'+(opt==='NF'?'nf':opt.toLowerCase());
+      btn.dataset.rid=rid;btn.dataset.key=key;btn.dataset.value=opt;
+      btn.setAttribute('aria-label',opt==='OK'?'OK':opt==='NOK'?'NOK – Mangel melden':'Nicht ausgeführt');
+      btn.setAttribute('aria-pressed',mobileStatus(rid,key)===opt?'true':'false');
+      if(mobileStatus(rid,key)===opt)btn.classList.add('selected');
+      btn.innerHTML='<span>'+(opt==='OK'?'✓':opt==='NOK'?'!':'—')+'</span>';
+      actions.appendChild(btn);
+    });
+    row.appendChild(actions);box.appendChild(row);
+  });
+  renderMobileDetails(rid);
+}
+function renderMobileDetails(rid){
+  const box=document.getElementById('mobileComponents');if(!box)return;
+  box.querySelectorAll('.mobile-nok-details').forEach(e=>e.remove());
+  const wrap=document.createElement('div');let count=0;
+  checkLabels.forEach((key,i)=>{
+    if(mobileStatus(rid,key)!=='NOK')return;
+    count++;
+    const d=document.createElement('div');d.className='nok-detail mobile-nok-details';
+    const label=document.createElement('label');label.innerHTML='<b>'+escapeHtml(checkNames[i])+' – Details zum Mangel</b>';
+    const ta=document.createElement('textarea');ta.rows=3;ta.dataset.rid=rid;ta.dataset.key=key;ta.placeholder='Bitte Mangel beschreiben...';ta.value=(details[rid]&&details[rid][key])||'';
+    d.appendChild(label);d.appendChild(ta);wrap.appendChild(d);
+  });
+  if(count){box.appendChild(wrap);wrap.querySelectorAll('textarea').forEach(t=>t.addEventListener('input',()=>{
+    details[rid]=details[rid]||{};details[rid][t.dataset.key]=t.value;syncDetails(rid);scheduleMobileSave();
+  }))}
+}
+function openMobileRoom(rid){
+  const idx=mobileRooms.findIndex(r=>r.id===rid);if(idx<0)return;
+  mobileCurrent=idx;
+  const overview=document.getElementById('mobileRoomOverview'),editor=document.getElementById('mobileRoomEditor');
+  if(!overview||!editor)return;
+  overview.classList.add('mobile-hidden');editor.classList.remove('mobile-hidden');
+  renderMobileComponents(rid);window.scrollTo({top:0,behavior:'smooth'});
+}
+function closeMobileRoom(){
+  const editor=document.getElementById('mobileRoomEditor'),overview=document.getElementById('mobileRoomOverview');
+  if(editor)editor.classList.add('mobile-hidden');if(overview)overview.classList.remove('mobile-hidden');
+  updateMobileProgress();scheduleMobileSave();
+}
 function nextMobileRoom(){if(mobileCurrent<mobileRooms.length-1){mobileCurrent++;renderMobileComponents(mobileRooms[mobileCurrent].id);window.scrollTo({top:0,behavior:'smooth'})}}
 function prevMobileRoom(){if(mobileCurrent>0){mobileCurrent--;renderMobileComponents(mobileRooms[mobileCurrent].id);window.scrollTo({top:0,behavior:'smooth'})}}
-function filterMobileRooms(){const q=(document.getElementById('mobileRoomSearch').value||'').toLowerCase();document.querySelectorAll('.mobile-room-card').forEach(c=>c.style.display=c.dataset.roomName.includes(q)?'flex':'none')}
-{% for r in rows %}try{details[{{r.id}}]={{r.issue_details or '{}'}}||{}}catch(e){details[{{r.id}}]={}}{% endfor %}
-function checkNok(rid,key){const v=mobileStatus(rid,key);if(v==='NOK'){details[rid]=details[rid]||{};if(details[rid][key]===undefined)details[rid][key]=''}else if(details[rid])delete details[rid][key];renderDetails(rid)}
-function renderDetails(rid){const box=document.getElementById('details_'+rid);if(!box)return;let parts=[];checkLabels.forEach((key,i)=>{const v=mobileStatus(rid,key);if(v==='NOK'){const safe=(details[rid]&&details[rid][key])||'';parts.push('<div class="nok-detail"><label><b>'+checkNames[i]+' – Details zum Mangel</b></label><textarea rows="2" data-rid="'+rid+'" data-key="'+key+'" placeholder="Bitte Mangel beschreiben...">'+escapeHtml(safe)+'</textarea></div>')}});box.innerHTML=parts.join('');box.querySelectorAll('textarea').forEach(t=>t.addEventListener('input',()=>{details[rid]=details[rid]||{};details[rid][t.dataset.key]=t.value;syncDetails(rid)}));const row=document.getElementById('detailrow_'+rid);if(row)row.style.display=parts.length?'table-row':'none';syncDetails(rid)}
-function syncDetails(rid){const target=document.getElementById('detailinput_'+rid);if(!target)return;let clean={};if(details[rid])Object.keys(details[rid]).forEach(k=>{if(details[rid][k]&&details[rid][k].trim())clean[k]=details[rid][k].trim()});target.value=JSON.stringify(clean)}
-function handleMobileStatus(el){const rid=Number(el.dataset.rid),key=el.dataset.key,value=el.dataset.value;if(!rid||!key)return;mobileState[rid]=mobileState[rid]||{};mobileState[rid][key]=value;const radio=document.querySelector('input[name="'+key+'_'+rid+'"][value="'+value+'"]');if(radio)radio.checked=true;checkNok(rid,key);updateMobileProgress();renderMobileComponents(rid)}
-function initMobileMaintenance(){document.querySelectorAll('.mobile-room-card').forEach(card=>{card.addEventListener('click',function(e){e.preventDefault();openMobileRoom(Number(this.dataset.roomId))},{passive:false})});const box=document.getElementById('mobileComponents');if(box){box.addEventListener('click',function(e){const label=e.target.closest('.mobile-status-btn');if(!label||!box.contains(label))return;e.preventDefault();handleMobileStatus(label)},{passive:false})}Object.keys(mobileState).forEach(rid=>renderDetails(Number(rid)));updateMobileProgress()}
-if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',initMobileMaintenance)}else{initMobileMaintenance()}
-const c=document.getElementById('sig'),x=c.getContext('2d');x.lineWidth=2;x.lineCap='round';let down=false,last=null;function pos(e){const r=c.getBoundingClientRect(),t=e.touches?e.touches[0]:e;return{x:(t.clientX-r.left)*c.width/r.width,y:(t.clientY-r.top)*c.height/r.height}}function start(e){down=true;last=pos(e);e.preventDefault()}function move(e){if(!down)return;const p=pos(e);x.beginPath();x.moveTo(last.x,last.y);x.lineTo(p.x,p.y);x.stroke();last=p;e.preventDefault()}function end(){down=false}c.addEventListener('mousedown',start);c.addEventListener('mousemove',move);window.addEventListener('mouseup',end);c.addEventListener('touchstart',start,{passive:false});c.addEventListener('touchmove',move,{passive:false});c.addEventListener('touchend',end);function clearSig(){x.clearRect(0,0,c.width,c.height)}function saveSig(){const f=document.getElementById('completeForm');f.querySelectorAll('.carry').forEach(e=>e.remove());document.querySelectorAll('#maintenanceForm input[type=radio]:checked').forEach(r=>{const h=document.createElement('input');h.type='hidden';h.name=r.name;h.value=r.value;h.className='carry';f.appendChild(h)});document.querySelectorAll('#maintenanceForm input[type=hidden][name^="details_"]').forEach(r=>{const h=document.createElement('input');h.type='hidden';h.name=r.name;h.value=r.value;h.className='carry';f.appendChild(h)});document.getElementById('signature').value=c.toDataURL('image/png');document.getElementById('completeInspector').value=document.querySelector('[name="inspector_name"]').value;document.getElementById('completeYear').value=document.querySelector('[name="inspection_year"]').value;document.getElementById('completeType').value=document.querySelector('[name="inspection_type"]').value;return true}
+function filterMobileRooms(){const input=document.getElementById('mobileRoomSearch');const q=(input&&input.value||'').toLowerCase();document.querySelectorAll('.mobile-room-card').forEach(c=>c.style.display=c.dataset.roomName.includes(q)?'flex':'none')}
+function syncDetails(rid){
+  const target=document.getElementById('detailinput_'+rid);if(!target)return;
+  const clean={};if(details[rid])Object.keys(details[rid]).forEach(k=>{const v=String(details[rid][k]??'').trim();if(v&&checkLabels.includes(k))clean[k]=v});
+  target.value=JSON.stringify(clean);
+  const box=document.getElementById('details_'+rid);
+  if(box){
+    const parts=[];checkLabels.forEach((key,i)=>{if(mobileStatus(rid,key)==='NOK'){const safe=escapeHtml((details[rid]&&details[rid][key])||'');parts.push('<div class="nok-detail"><label><b>'+escapeHtml(checkNames[i])+' – Details zum Mangel</b></label><textarea rows="2" data-rid="'+rid+'" data-key="'+key+'" placeholder="Bitte Mangel beschreiben...">'+safe+'</textarea></div>')}});
+    box.innerHTML=parts.join('');
+  }
+}
+function escapeHtml(value){return String(value??'').replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]))}
+function initMobileMaintenance(){
+  document.querySelectorAll('.mobile-room-card').forEach(card=>card.addEventListener('click',e=>{e.preventDefault();openMobileRoom(Number(card.dataset.roomId))}));
+  const box=document.getElementById('mobileComponents');
+  if(box)box.addEventListener('click',e=>{
+    const btn=e.target.closest('.mobile-status-btn');if(!btn||!box.contains(btn))return;
+    e.preventDefault();e.stopPropagation();setMobileStatus(Number(btn.dataset.rid),btn.dataset.key,btn.dataset.value);
+  });
+  updateMobileProgress();
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initMobileMaintenance);else initMobileMaintenance();
+
+const c=document.getElementById('sig'),x=c.getContext('2d');x.lineWidth=2;x.lineCap='round';let down=false,last=null;
+function pos(e){const r=c.getBoundingClientRect(),t=e.touches?e.touches[0]:e;return{x:(t.clientX-r.left)*c.width/r.width,y:(t.clientY-r.top)*c.height/r.height}}
+function start(e){down=true;last=pos(e);e.preventDefault()}
+function move(e){if(!down)return;const p=pos(e);x.beginPath();x.moveTo(last.x,last.y);x.lineTo(p.x,p.y);x.stroke();last=p;e.preventDefault()}
+function end(){down=false}
+c.addEventListener('mousedown',start);c.addEventListener('mousemove',move);window.addEventListener('mouseup',end);c.addEventListener('touchstart',start,{passive:false});c.addEventListener('touchmove',move,{passive:false});c.addEventListener('touchend',end);
+function clearSig(){x.clearRect(0,0,c.width,c.height)}
+function saveSig(){
+  const f=document.getElementById('completeForm');f.querySelectorAll('.carry').forEach(e=>e.remove());
+  document.querySelectorAll('#maintenanceForm input[type=radio]:checked').forEach(r=>{const h=document.createElement('input');h.type='hidden';h.name=r.name;h.value=r.value;h.className='carry';f.appendChild(h)});
+  document.querySelectorAll('#maintenanceForm input[type=hidden][name^="details_"]').forEach(r=>{const h=document.createElement('input');h.type='hidden';h.name=r.name;h.value=r.value;h.className='carry';f.appendChild(h)});
+  document.getElementById('signature').value=c.toDataURL('image/png');
+  document.getElementById('completeInspector').value=document.querySelector('[name="inspector_name"]').value;
+  document.getElementById('completeYear').value=document.querySelector('[name="inspection_year"]').value;
+  document.getElementById('completeType').value=document.querySelector('[name="inspection_type"]').value;
+  return true;
+}
 </script>{% endif %}{% endblock %}
