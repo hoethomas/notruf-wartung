@@ -20,6 +20,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+from reportlab.pdfgen import canvas
 
 BASE = Path(__file__).resolve().parent.parent
 DB = BASE / "notruf.db"
@@ -86,6 +87,7 @@ def init_db():
         technician_id INTEGER NOT NULL,
         inspector_name TEXT,
         inspection_year INTEGER,
+        inspection_type TEXT,
         email_address TEXT,
         status TEXT NOT NULL DEFAULT 'open',
         created_at TEXT NOT NULL,
@@ -110,6 +112,7 @@ def init_db():
         hauscode TEXT NOT NULL,
         house_display TEXT NOT NULL,
         stationsbezeichnung TEXT NOT NULL,
+        station_id TEXT,
         station_system_id TEXT,
         station_type TEXT,
         room_count INTEGER NOT NULL DEFAULT 0,
@@ -141,13 +144,14 @@ def init_db():
         cols = {row[1] for row in c.execute(f"PRAGMA table_info({table})").fetchall()}
         if col not in cols:
             c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {definition}")
+    add_col("config_stations", "station_id", "TEXT")
     add_col("config_stations", "station_system_id", "TEXT")
     add_col("config_records", "station_id", "TEXT")
     add_col("config_records", "station_system_id", "TEXT")
     add_col("maintenances", "station_id", "TEXT")
     add_col("users", "role", "TEXT NOT NULL DEFAULT 'technician'")
     for col, definition in [
-        ("inspector_name", "TEXT"), ("inspection_year", "INTEGER"), ("email_address", "TEXT"),
+        ("inspector_name", "TEXT"), ("inspection_year", "INTEGER"), ("inspection_type", "TEXT"), ("email_address", "TEXT"),
         ("email_sent_at", "TEXT"), ("email_error", "TEXT"), ("pdf_path", "TEXT")]:
         add_col("maintenances", col, definition)
     add_col("results", "manual", "INTEGER NOT NULL DEFAULT 0")
@@ -460,7 +464,7 @@ def save_import_for_user(request, filename, config_name, records, station_meta):
     if old:
         c.execute("DELETE FROM config_records WHERE config_id=?",(old,)); c.execute("DELETE FROM config_stations WHERE config_id=?",(old,)); c.execute("DELETE FROM imported_configs WHERE id=? AND user_id=?",(old,u["id"]))
     cur=c.execute("INSERT INTO imported_configs(user_id,filename,config_name,created_at) VALUES(?,?,?,?)",(u["id"],filename,config_name,now)); cid=cur.lastrowid
-    c.executemany("INSERT INTO config_stations(config_id,hauscode,house_display,stationsbezeichnung,station_system_id,station_type,room_count) VALUES(?,?,?,?,?,?,?)",[(cid,s["hauscode"],s["house_display"],s["stationsbezeichnung"],s.get("station_system_id",""),s.get("station_type",""),s.get("room_count",0)) for s in station_meta])
+    c.executemany("INSERT INTO config_stations(config_id,hauscode,house_display,stationsbezeichnung,station_id,station_system_id,station_type,room_count) VALUES(?,?,?,?,?,?,?,?)",[(cid,s["hauscode"],s["house_display"],s["stationsbezeichnung"],s.get("station_id",""),s.get("station_system_id",""),s.get("station_type",""),s.get("room_count",0)) for s in station_meta])
     c.executemany("INSERT INTO config_records(config_id,hauscode,house_display,stationsbezeichnung,station_id,station_system_id,zimmerbezeichnung) VALUES(?,?,?,?,?,?,?)",[(cid,r["hauscode"],r["house_display"],r["stationsbezeichnung"],r.get("station_id",""),r.get("station_system_id",""),r["zimmerbezeichnung"]) for r in records])
     c.commit();c.close();request.session["config_id"]=cid
     return cid
@@ -493,6 +497,47 @@ def save_results_from_form(c, mid, form):
                   (*vals, json.dumps(details, ensure_ascii=False), rid))
 
 
+class NumberedCanvas(canvas.Canvas):
+    """Canvas that writes the final page count after the document is built."""
+    def __init__(self, *args, **kwargs):
+        canvas.Canvas.__init__(self, *args, **kwargs)
+        self._saved_page_states = []
+
+    def showPage(self):
+        self._saved_page_states.append(dict(self.__dict__))
+        self._startPage()
+
+    def save(self):
+        num_pages = len(self._saved_page_states)
+        for state in self._saved_page_states:
+            self.__dict__.update(state)
+            self.draw_page_number(num_pages)
+            canvas.Canvas.showPage(self)
+        canvas.Canvas.save(self)
+
+    def draw_page_number(self, page_count):
+        self.saveState()
+        self.setFont("Helvetica", 7)
+        self.drawRightString(198*mm, 9*mm, f"Seite {self._pageNumber}/{page_count}")
+        self.restoreState()
+
+
+def format_date_de(value):
+    if not value:
+        return ""
+    try:
+        return datetime.fromisoformat(str(value)).strftime("%d.%m.%Y")
+    except Exception:
+        return str(value)[:10]
+
+
+INSPECTION_TITLES = {
+    "Inspektion": "Zusammenfassung der Rufanlageninspektion",
+    "Wartung": "Zusammenfassung der Rufanlagenwartung",
+    "Instandhaltung": "Zusammenfassung der Rufanlageninstandhaltung",
+}
+
+
 def make_pdf(mid):
     c = db()
     m = c.execute("SELECT m.*,u.display_name FROM maintenances m JOIN users u ON u.id=m.technician_id WHERE m.id=?", (mid,)).fetchone()
@@ -508,11 +553,13 @@ def make_pdf(mid):
     center = ParagraphStyle("center", parent=small, alignment=1)
     issue_style = ParagraphStyle("issue", parent=small, fontSize=7, leading=8)
 
-    title_block = [Paragraph("Zusammenfassung der Rufanlagenwartung", title), Paragraph("Dies ist nicht das offizielle Wartungsprotokoll. Das Wartungsprotokoll erhalten Sie separat.", subtitle)]
+    inspection_type = m["inspection_type"] or "Wartung"
+    pdf_title = INSPECTION_TITLES.get(inspection_type, INSPECTION_TITLES["Wartung"])
+    title_block = [Paragraph(pdf_title, title), Paragraph("Dieses Dokument ist eine Zusammenfassung und ersetzt nicht das offizielle Wartungsprotokoll. Das offizielle Wartungsprotokoll erhalten Sie separat.", subtitle)]
     header = Table([
         [title_block, ""],
         [Paragraph(f"<b>Haus:</b> {m['hauscode']}", center), Paragraph(f"<b>Station:</b> {m['station']}", center)],
-        [Paragraph(f"<b>Überprüfung für das Jahr:</b> {m['inspection_year'] or ''}", center), Paragraph(f"<b>Prüfer:</b> {m['inspector_name'] or m['display_name'] or ''}", center)],
+        [Paragraph(f"<b>Überprüfung für das Jahr:</b> {m['inspection_year'] or ''}", center), Paragraph(f"<b>Art der Überprüfung:</b> {inspection_type}", center)],
     ], colWidths=[99*mm,99*mm], rowHeights=[13*mm,8*mm,8*mm])
     header.setStyle(TableStyle([("SPAN",(0,0),(-1,0)),("GRID",(0,0),(-1,-1),0.6,colors.black),("VALIGN",(0,0),(-1,-1),"MIDDLE")]))
 
@@ -554,32 +601,53 @@ def make_pdf(mid):
         [Paragraph("<font color='#dc2626'><b>!</b></font>", ParagraphStyle("lgnok", parent=center, fontSize=11, leading=11)), Paragraph("<b>NOK</b> – Mangel festgestellt", small)],
         [Paragraph("<font color='#64748b'><b>—</b></font>", ParagraphStyle("lgnf", parent=center, fontSize=11, leading=11)), Paragraph("<b>nicht ausgeführt</b>", small)],
     ]
-    legend_table=Table(legend_cells, colWidths=[12*mm,186*mm])
+    legend_table=Table(legend_cells, colWidths=[12*mm,82*mm])
     legend_table.setStyle(TableStyle([
         ("BOX",(0,0),(-1,-1),0.6,colors.black),("INNERGRID",(0,0),(-1,-1),0.3,colors.black),
         ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ALIGN",(0,0),(0,-1),"CENTER"),
-        ("BACKGROUND",(0,0),(0,0),colors.HexColor("#dcfce7")),
-        ("BACKGROUND",(0,1),(0,1),colors.HexColor("#fee2e2")),
-        ("BACKGROUND",(0,2),(0,2),colors.HexColor("#e2e8f0")),
+        ("BACKGROUND",(0,0),(0,0),colors.HexColor("#dcfce7")),("BACKGROUND",(0,1),(0,1),colors.HexColor("#fee2e2")),("BACKGROUND",(0,2),(0,2),colors.HexColor("#e2e8f0")),
         ("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),2.5),("BOTTOMPADDING",(0,0),(-1,-1),2.5)
     ]))
-    legend_box=Table([[legend_title],[legend_table]],colWidths=[198*mm])
-    legend_box.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.6,colors.black),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eeeeee")),("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3)]))
-    story.append(legend_box); story.append(Spacer(1,3*mm))
+
+    abbrev_cells=[
+        [Paragraph("<b>ZT:</b>",small), Paragraph("Zimmerterminal",small)],
+        [Paragraph("<b>ZL:</b>",small), Paragraph("Zimmerlampe",small)],
+        [Paragraph("<b>RT B1:</b>",small), Paragraph("Ruftaster Bett 1",small)],
+        [Paragraph("<b>RT B2:</b>",small), Paragraph("Ruftaster Bett 2",small)],
+        [Paragraph("<b>RT B3:</b>",small), Paragraph("Ruftaster Bett 3",small)],
+        [Paragraph("<b>RT:</b>",small), Paragraph("Ruftaster",small)],
+        [Paragraph("<b>PT Bad:</b>",small), Paragraph("Pneumatischer Taster im Bad",small)],
+        [Paragraph("<b>RT Bad:</b>",small), Paragraph("Ruftaster Bad",small)],
+        [Paragraph("<b>ZT Bad:</b>",small), Paragraph("Zugtaster Bad",small)],
+        [Paragraph("<b>AT Bad:</b>",small), Paragraph("Abstelltaster Bad",small)],
+    ]
+    abbrev_table=Table(abbrev_cells, colWidths=[25*mm,69*mm])
+    abbrev_table.setStyle(TableStyle([
+        ("BOX",(0,0),(-1,-1),0.6,colors.black),("INNERGRID",(0,0),(-1,-1),0.3,colors.black),
+        ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+        ("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),2),("BOTTOMPADDING",(0,0),(-1,-1),2)
+    ]))
+    legend_left=Table([[legend_title],[legend_table]],colWidths=[94*mm])
+    legend_left.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.6,colors.black),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eeeeee")),("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3)]))
+    abbrev_title=Paragraph("<b>Abkürzungen</b>", ParagraphStyle("abbrevtitle", parent=small, fontName="Helvetica-Bold", fontSize=7.2, leading=8))
+    legend_right=Table([[abbrev_title],[abbrev_table]],colWidths=[94*mm])
+    legend_right.setStyle(TableStyle([("BOX",(0,0),(-1,-1),0.6,colors.black),("BACKGROUND",(0,0),(-1,0),colors.HexColor("#eeeeee")),("LEFTPADDING",(0,0),(-1,-1),3),("RIGHTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3)]))
+    combined_legend=Table([[legend_left,legend_right]],colWidths=[96*mm,96*mm])
+    combined_legend.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(-1,-1),0),("RIGHTPADDING",(0,0),(-1,-1),0),("TOPPADDING",(0,0),(-1,-1),0),("BOTTOMPADDING",(0,0),(-1,-1),0)]))
+    story.append(combined_legend); story.append(Spacer(1,3*mm))
 
     sig_img=""
     if m["signature"] and m["signature"].startswith("data:image"):
         try:
             raw=base64.b64decode(m["signature"].split(",",1)[1]); sig_img=Image(io.BytesIO(raw),width=55*mm,height=18*mm)
         except Exception: pass
-    completed=m["completed_at"] or ""
+    completed=format_date_de(m["completed_at"])
     notes=Table([
-        [Paragraph("<b>Name des Prüfers:</b>",small),Paragraph("<b>Unterschrift:</b>",small)],
-        [Paragraph(str(m["inspector_name"] or m["display_name"] or ""),small),sig_img],
-        [Paragraph(f"<b>Abschlussdatum:</b> {completed}",small),Paragraph("",small)],
-    ],colWidths=[99*mm,99*mm],rowHeights=[7*mm,22*mm,12*mm])
+        [Paragraph("<b>Unterschrift:</b>",small),sig_img],
+        [Paragraph(f"<b>Name des Prüfers:</b> {m['inspector_name'] or m['display_name'] or ''}",small),Paragraph(f"<b>Abschlussdatum:</b> {completed}",small)],
+    ],colWidths=[99*mm,99*mm],rowHeights=[22*mm,12*mm])
     notes.setStyle(TableStyle([("GRID",(0,0),(-1,-1),0.6,colors.black),("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(-1,-1),3),("TOPPADDING",(0,0),(-1,-1),3)])); story.append(notes)
-    doc.build(story); out.seek(0); return out
+    doc.build(story, canvasmaker=NumberedCanvas); out.seek(0); return out
 
 
 
@@ -676,7 +744,7 @@ def login(request: Request,username:str=Form(...),password:str=Form(...)):
 def logout(request: Request): request.session.clear();return RedirectResponse("/login",303)
 
 @app.post("/maintenance/start")
-def maintenance_start(request: Request,hauscode:str=Form(...),station_id:str=Form(...),inspection_year:int=Form(...)):
+def maintenance_start(request: Request,hauscode:str=Form(...),station_id:str=Form(...),inspection_year:int=Form(...),inspection_type:str=Form(...)):
     if not require_user(request):return RedirectResponse("/login",303)
     if not get_active_config_id(request): return RedirectResponse("/import?error=Bitte+zuerst+eine+VCIP-Datei+hochladen",303)
     c=db(); st=c.execute("SELECT stationsbezeichnung FROM config_stations WHERE config_id=? AND hauscode=? AND station_id=?",(get_active_config_id(request),hauscode.strip(),station_id.strip())).fetchone()
@@ -685,8 +753,9 @@ def maintenance_start(request: Request,hauscode:str=Form(...),station_id:str=For
     station=st["stationsbezeichnung"]
     rooms=get_rooms(hauscode.strip(),station,request,station_id.strip())
     if not rooms:return RedirectResponse("/?error=Keine+Zimmer+gefunden",303)
+    if inspection_type not in INSPECTION_TITLES: return RedirectResponse("/?error=Ungültige+Art+der+Überprüfung",303)
     c=db(); now=datetime.now().isoformat(timespec="seconds"); u=current_user(request)
-    cur=c.execute("INSERT INTO maintenances(hauscode,station,station_id,technician_id,inspector_name,inspection_year,created_at) VALUES(?,?,?,?,?,?,?)",(hauscode.strip(),station,station_id.strip(),u["id"],u["display_name"],inspection_year,now));mid=cur.lastrowid
+    cur=c.execute("INSERT INTO maintenances(hauscode,station,station_id,technician_id,inspector_name,inspection_year,inspection_type,created_at) VALUES(?,?,?,?,?,?,?,?)",(hauscode.strip(),station,station_id.strip(),u["id"],u["display_name"],inspection_year,inspection_type,now));mid=cur.lastrowid
     c.executemany("INSERT INTO results(maintenance_id,room_name,manual) VALUES(?,?,0)",[(mid,r) for r in rooms]);c.commit();c.close();return RedirectResponse(f"/maintenance/{mid}",303)
 
 @app.get("/maintenance/{mid}",response_class=HTMLResponse)
@@ -703,8 +772,9 @@ async def maintenance_save(request:Request,mid:int):
     form=await request.form();c=db();exists=c.execute("SELECT id FROM maintenances WHERE id=?",(mid,)).fetchone()
     if not exists:c.close();return RedirectResponse("/",303)
     save_results_from_form(c,mid,form)
-    inspector=(form.get("inspector_name") or "").strip();year=form.get("inspection_year") or None
-    c.execute("UPDATE maintenances SET inspector_name=?,inspection_year=? WHERE id=?",(inspector,year,mid));c.commit();c.close();return RedirectResponse(f"/maintenance/{mid}",303)
+    inspector=(form.get("inspector_name") or "").strip();year=form.get("inspection_year") or None; inspection_type=(form.get("inspection_type") or "").strip()
+    if inspection_type not in INSPECTION_TITLES: inspection_type="Wartung"
+    c.execute("UPDATE maintenances SET inspector_name=?,inspection_year=?,inspection_type=? WHERE id=?",(inspector,year,inspection_type,mid));c.commit();c.close();return RedirectResponse(f"/maintenance/{mid}",303)
 
 @app.post("/maintenance/{mid}/add-room")
 def add_room(request:Request,mid:int,room_name:str=Form(...)):
@@ -717,14 +787,15 @@ def add_room(request:Request,mid:int,room_name:str=Form(...)):
 @app.post("/maintenance/{mid}/complete")
 async def maintenance_complete(request:Request,mid:int):
     if not require_user(request):return RedirectResponse("/login",303)
-    form=await request.form();sig=(form.get("signature") or "").strip();inspector=(form.get("inspector_name") or "").strip();year=form.get("inspection_year") or None
+    form=await request.form();sig=(form.get("signature") or "").strip();inspector=(form.get("inspector_name") or "").strip();year=form.get("inspection_year") or None; inspection_type=(form.get("inspection_type") or "").strip()
     if not sig or not sig.startswith("data:image"):
         return RedirectResponse(f"/maintenance/{mid}?error=Bitte+Unterschrift+setzen",303)
     c=db();exists=c.execute("SELECT id FROM maintenances WHERE id=?",(mid,)).fetchone()
     if not exists:c.close();return RedirectResponse("/",303)
     save_results_from_form(c,mid,form)
     completed=datetime.now().isoformat(timespec="seconds")
-    c.execute("UPDATE maintenances SET inspector_name=?,inspection_year=?,status='completed',completed_at=?,signature=? WHERE id=?",(inspector,year,completed,sig,mid));c.commit();c.close()
+    if inspection_type not in INSPECTION_TITLES: inspection_type="Wartung"
+    c.execute("UPDATE maintenances SET inspector_name=?,inspection_year=?,inspection_type=?,status='completed',completed_at=?,signature=? WHERE id=?",(inspector,year,inspection_type,completed,sig,mid));c.commit();c.close()
     pdf=make_pdf(mid);pdf_bytes=pdf.getvalue();filename=f"Zusammenfassung_Rufanlagenwartung_{mid}.pdf";path=PROTOCOL_DIR/filename;path.write_bytes(pdf_bytes)
     c=db();c.execute("UPDATE maintenances SET pdf_path=? WHERE id=?",(str(path),mid));c.commit();c.close()
     return RedirectResponse(f"/maintenance/{mid}/completed",303)
@@ -734,7 +805,7 @@ def maintenance_completed(request:Request,mid:int):
     if not require_user(request):return RedirectResponse("/login",303)
     c=db();m=c.execute("SELECT m.*,u.display_name FROM maintenances m JOIN users u ON u.id=m.technician_id WHERE m.id=?",(mid,)).fetchone();c.close()
     if not m:return RedirectResponse("/",303)
-    return TEMPLATES.TemplateResponse("completed.html",{"request":request,"user":current_user(request),"m":m})
+    return TEMPLATES.TemplateResponse("completed.html",{"request":request,"user":current_user(request),"m":m,"completed_date":format_date_de(m["completed_at"])})
 
 @app.get("/maintenance/{mid}/pdf")
 def maintenance_pdf(request:Request,mid:int):
