@@ -602,7 +602,7 @@ def make_pdf(mid):
         [Paragraph("<font color='#dc2626'><b>!</b></font>", ParagraphStyle("lgnok", parent=center, fontSize=11, leading=11)), Paragraph("<b>NOK</b> – Mangel festgestellt", small)],
         [Paragraph("<font color='#64748b'><b>—</b></font>", ParagraphStyle("lgnf", parent=center, fontSize=11, leading=11)), Paragraph("<b>nicht ausgeführt</b>", small)],
     ]
-    legend_table=Table(legend_cells, colWidths=[12*mm,82*mm])
+    legend_table=Table(legend_cells, colWidths=[12*mm,76*mm])
     legend_table.setStyle(TableStyle([
         ("BOX",(0,0),(-1,-1),0.6,colors.black),("INNERGRID",(0,0),(-1,-1),0.3,colors.black),
         ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ALIGN",(0,0),(0,-1),"CENTER"),
@@ -622,7 +622,7 @@ def make_pdf(mid):
         [Paragraph("<b>ZT Bad:</b>",small), Paragraph("Zugtaster Bad",small)],
         [Paragraph("<b>AT Bad:</b>",small), Paragraph("Abstelltaster Bad",small)],
     ]
-    abbrev_table=Table(abbrev_cells, colWidths=[25*mm,69*mm])
+    abbrev_table=Table(abbrev_cells, colWidths=[25*mm,63*mm])
     abbrev_table.setStyle(TableStyle([
         ("BOX",(0,0),(-1,-1),0.6,colors.black),("INNERGRID",(0,0),(-1,-1),0.3,colors.black),
         ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
