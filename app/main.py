@@ -816,4 +816,18 @@ def maintenance_completed(request:Request,mid:int):
 @app.get("/maintenance/{mid}/pdf")
 def maintenance_pdf(request:Request,mid:int):
     if not require_user(request):return RedirectResponse("/login",303)
-    pdf=make_pdf(mid);return StreamingResponse(pdf,media_type="application/pdf",headers={"Content-Disposition":f'inline; filename="Zusammenfassung_Rufanlagen{'inspektion' if (m["inspection_type"] or "Wartung")=="Inspektion" else ('instandhaltung' if (m["inspection_type"] or "Wartung")=="Instandhaltung" else 'wartung')}_{mid}.pdf"'})
+    c=db()
+    m=c.execute("SELECT * FROM maintenances WHERE id=?",(mid,)).fetchone()
+    c.close()
+    if not m:
+        raise HTTPException(status_code=404,detail="Überprüfung nicht gefunden")
+    pdf=make_pdf(mid)
+    inspection_type=m["inspection_type"] or "Wartung"
+    if inspection_type=="Inspektion":
+        kind="inspektion"
+    elif inspection_type=="Instandhaltung":
+        kind="instandhaltung"
+    else:
+        kind="wartung"
+    filename=f"Zusammenfassung_Rufanlagen{kind}_{mid}.pdf"
+    return StreamingResponse(pdf,media_type="application/pdf",headers={"Content-Disposition":f'inline; filename="{filename}"'})
