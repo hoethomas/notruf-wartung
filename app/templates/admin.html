@@ -22,7 +22,7 @@
   </div>
   <div class="admin-table-wrap">
   <table id="adminTable" class="admin-table">
-    <thead><tr><th>Datum</th><th>Techniker</th><th>Haus</th><th>Station</th><th>Art</th><th>Fortschritt</th><th>NOK</th><th>Status</th><th>Dokument</th></tr></thead>
+    <thead><tr><th>Datum</th><th>Techniker</th><th>Haus</th><th>Station</th><th>Art</th><th>Fortschritt</th><th>NOK</th><th>Status</th><th>Protokoll</th></tr></thead>
     <tbody>
     {% for m in maintenances %}
       {% set total=m.total_rooms or 0 %}{% set checked=m.checked_rooms or 0 %}{% set pct=((checked*100/total)|round|int) if total else 0 %}
@@ -33,7 +33,7 @@
         <td style="min-width:150px"><b>{{checked}} / {{total}} Zimmer</b><div class="admin-progress"><span style="width:{{pct}}%"></span></div><small>{{pct}} %</small></td>
         <td><span class="admin-nok">{{m.nok_rooms or 0}}</span>{% if m.nok_components %}<div class="mini">{{m.nok_components}} Komponenten</div>{% endif %}</td>
         <td><span class="status {% if m.status=='completed' %}ok{% else %}nf{% endif %}">{{'abgeschlossen' if m.status=='completed' else 'in Bearbeitung'}}</span>{% if m.status!='completed' and m.updated_at %}<div class="mini">{{m.updated_at[:16].replace('T',' ')}}</div>{% endif %}</td>
-        <td class="admin-actions"><a class="btn secondary" href="/admin/maintenance/{{m.id}}">Ansehen</a>{% if m.status=='completed' %}<a class="btn" href="/maintenance/{{m.id}}/pdf" target="_blank">📄 PDF</a>{% endif %}</td>
+        <td class="admin-actions"><a class="btn secondary" href="/admin/maintenance/{{m.id}}">{{'Protokoll ansehen' if m.status!='completed' else 'Details'}}</a>{% if m.status=='completed' %}<a class="btn" href="/maintenance/{{m.id}}/pdf" target="_blank">📄 PDF</a>{% else %}<span class="mini">noch nicht abgeschlossen</span>{% endif %}</td>
       </tr>
     {% else %}<tr><td colspan="9">Noch keine Wartungen vorhanden.</td></tr>{% endfor %}
     </tbody>

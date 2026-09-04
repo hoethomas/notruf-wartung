@@ -1,9 +1,28 @@
 {% extends "base.html" %}{% block content %}
 <div class="actions" style="justify-content:space-between"><div><a class="btn secondary" href="/admin">← Administration</a></div><div>{% if m.status=='completed' %}<a class="btn" href="/maintenance/{{m.id}}/pdf" target="_blank">📄 PDF öffnen</a>{% endif %}</div></div>
+{% if request.query_params.get('success') %}<div class="notice success">✓ {{request.query_params.get('success')}}</div>{% endif %}
+{% if request.query_params.get('error') %}<div class="notice error">{{request.query_params.get('error')}}</div>{% endif %}
 <div class="card admin-detail-head">
-  <div><h1>{{m.inspection_type or 'Wartung'}} #{{m.id}}</h1><p><b>Haus:</b> {{m.hauscode}} &nbsp;·&nbsp; <b>Station:</b> {{m.station}}</p><p class="mini"><b>Techniker:</b> {{m.display_name}} &nbsp;·&nbsp; <b>Prüfer:</b> {{m.inspector_name or m.display_name}} &nbsp;·&nbsp; <b>Jahr:</b> {{m.inspection_year}}</p></div>
+  <div><h1>{{m.inspection_type or 'Wartung'}} #{{m.id}}</h1><p><b>Haus:</b> {{m.hauscode}} &nbsp;·&nbsp; <b>Station:</b> {{m.station}}</p><p class="mini"><b>Aktueller Techniker:</b> {{m.display_name}} &nbsp;·&nbsp; <b>Prüfer:</b> {{m.inspector_name or m.display_name}} &nbsp;·&nbsp; <b>Jahr:</b> {{m.inspection_year}}</p>{% if m.original_display_name and m.original_display_name != m.display_name %}<p class="mini"><b>Ursprünglich begonnen von:</b> {{m.original_display_name}}</p>{% endif %}</div>
   <div class="admin-detail-status"><span class="status {% if m.status=='completed' %}ok{% else %}nf{% endif %}">{{'ABGESCHLOSSEN' if m.status=='completed' else 'IN BEARBEITUNG'}}</span>{% if m.completed_at %}<small>Abschluss: {{m.completed_at[:10][8:10]}}.{{m.completed_at[:10][5:7]}}.{{m.completed_at[:10][0:4]}}</small>{% endif %}</div>
 </div>
+{% if m.status != 'completed' %}
+<div class="card" style="margin-top:16px">
+  <h2>🔄 Wartung übertragen</h2>
+  <p class="mini">Der gesamte bisherige Prüfstand bleibt erhalten. Der ausgewählte Techniker kann anschließend genau an diesem Stand weiterarbeiten.</p>
+  {% if technicians %}
+  <form method="post" action="/admin/maintenance/{{m.id}}/transfer" class="actions" style="align-items:end">
+    <div style="min-width:260px;flex:1"><label for="target_user_id">An Techniker übertragen</label><select id="target_user_id" name="target_user_id" required><option value="">Bitte auswählen …</option>{% for t in technicians %}<option value="{{t.id}}">{{t.display_name}}</option>{% endfor %}</select></div>
+    <button class="btn" type="submit" onclick="return confirm('Wartung wirklich an den ausgewählten Techniker übertragen? Der bisherige Prüfstand bleibt erhalten.')">↗ Wartung übertragen</button>
+  </form>
+  {% else %}<p class="mini">Keine anderen aktiven Techniker vorhanden.</p>{% endif %}
+</div>
+{% endif %}
+
+{% if transfers %}
+<div class="card" style="margin-top:16px"><h2>Übertragungshistorie</h2><div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Datum</th><th>Von</th><th>An</th><th>Durch Admin</th></tr></thead><tbody>{% for t in transfers %}<tr><td>{{t.transferred_at[:16].replace('T',' ')}}</td><td>{{t.from_name}}</td><td><b>{{t.to_name}}</b></td><td>{{t.admin_name}}</td></tr>{% endfor %}</tbody></table></div></div>
+{% endif %}
+
 <div class="admin-detail-stats">
  <div><span>Fortschritt</span><strong>{{checked}} / {{total}}</strong><small>{{pct}} % der Zimmer vollständig</small></div>
  <div><span>OK / geprüft</span><strong>{{checked}}</strong><small>vollständig ausgefüllte Zimmer</small></div>

@@ -27,7 +27,7 @@
 </div>
 <table class="maintenance-table"><tr><th>Bezeichnung</th>{% for c in checks %}<th>{{c[1]}}</th>{% endfor %}</tr>
 {% for r in rows %}<tr><td><b>{{r.room_name}}</b>{% if r.manual %}<span class="manual"> manuell</span>{% endif %}</td>
-{% for key,label,options in checks %}<td data-component="{{label}}"><div class="check">{% for opt in options %}<label class="status-btn status-{{ 'nf' if opt=='NF' else opt|lower }}" title="{{ 'nicht ausgeführt' if opt=='NF' else opt }}"><input type="radio" name="{{key}}_{{r.id}}" value="{{opt}}" {% if r[key]==opt %}checked{% endif %} onchange="checkNok('{{r.id}}','{{key}}',this.checked)"><span class="status-icon">{{ '✓' if opt=='OK' else ('!' if opt=='NOK' else '—') }}</span><span class="sr-only">{{ 'nicht ausgeführt' if opt=='NF' else opt }}</span></label>{% endfor %}</div></td>{% endfor %}</tr>
+{% for key,label,options in checks %}<td data-component="{{label}}"><div class="check">{% for opt in options %}<label class="status-btn status-{{ 'nf' if opt=='NF' else opt|lower }}" title="{{ 'nicht ausgeführt' if opt=='NF' else opt }}"><input type="radio" name="{{key}}_{{r.id}}" value="{{opt}}" {% if r[key]==opt %}checked{% endif %}><span class="status-icon">{{ '✓' if opt=='OK' else ('!' if opt=='NOK' else '—') }}</span><span class="sr-only">{{ 'nicht ausgeführt' if opt=='NF' else opt }}</span></label>{% endfor %}</div></td>{% endfor %}</tr>
 <tr id="detailrow_{{r.id}}" class="detail-row"><td colspan="{{checks|length+1}}"><div id="details_{{r.id}}"></div><input type="hidden" name="details_{{r.id}}" id="detailinput_{{r.id}}" value="{{r.issue_details or '{}'}}"></td></tr>{% endfor %}</table></div>
 <button class="btn" type="submit">Zwischenspeichern</button></form>
 {% endif %}
@@ -44,6 +44,7 @@ const details={};
 const mobileState={};
 let mobileCurrent=-1;
 let mobileSaveTimer=null;
+let mobileSaveInFlight=false;
 
 {% for r in rows %}
 mobileState[{{r.id}}]={};
@@ -83,15 +84,18 @@ function scheduleMobileSave(){
   mobileSaveTimer=setTimeout(saveMobileProgress,500);
 }
 async function saveMobileProgress(){
+  if(mobileSaveInFlight)return;
   const form=document.getElementById('maintenanceForm');
   const state=document.getElementById('mobileSaveStatus');
   if(state)state.textContent='Speichert…';
   if(!form)return;
   try{
+    mobileSaveInFlight=true;
     const fd=new FormData(form);
     const r=await fetch(form.action,{method:'POST',body:fd,credentials:'same-origin',redirect:'follow',headers:{'X-Requested-With':'XMLHttpRequest'}});
     if(!r.ok){if(state)state.textContent='Speichern fehlgeschlagen';console.warn('Speichern fehlgeschlagen',r.status)}else{if(state)state.textContent='✓ Gespeichert'}}
   catch(e){if(state)state.textContent='Speichern fehlgeschlagen';console.warn('Speichern fehlgeschlagen',e)}
+  finally{mobileSaveInFlight=false}
 }
 function setMobileStatus(rid,key,value){
   if(!mobileState[rid])mobileState[rid]={};
@@ -179,6 +183,19 @@ function syncDetails(rid){
   }
 }
 function escapeHtml(value){return String(value??'').replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]))}
+function bindDesktopRadioSync(){
+  document.querySelectorAll('#maintenanceForm input[type=radio]').forEach(r=>r.addEventListener('change',()=>{
+    const m=r.name.match(/^(.+)_([0-9]+)$/); if(!m)return;
+    const key=m[1],rid=Number(m[2]);
+    if(!mobileState[rid])mobileState[rid]={};
+    mobileState[rid][key]=r.value;
+    if(r.value==='NOK'){
+      details[rid]=details[rid]||{};
+      if(details[rid][key]===undefined)details[rid][key]='';
+    }else if(details[rid]) delete details[rid][key];
+    syncDetails(rid); updateMobileProgress();
+  }));
+}
 function initMobileMaintenance(){
   document.querySelectorAll('.mobile-room-card').forEach(card=>card.addEventListener('click',e=>{e.preventDefault();openMobileRoom(Number(card.dataset.roomId))}));
   const box=document.getElementById('mobileComponents');
@@ -186,6 +203,7 @@ function initMobileMaintenance(){
     const btn=e.target.closest('.mobile-status-btn');if(!btn||!box.contains(btn))return;
     e.preventDefault();e.stopPropagation();setMobileStatus(Number(btn.dataset.rid),btn.dataset.key,btn.dataset.value);
   });
+  bindDesktopRadioSync();
   updateMobileProgress();
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initMobileMaintenance);else initMobileMaintenance();
