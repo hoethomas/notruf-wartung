@@ -10,7 +10,6 @@
 <label>Haus<select id="house" name="hauscode" onchange="loadStations()" required><option value="">Bitte auswählen...</option>{% for code,label in houses %}<option value="{{code}}">{{label}}</option>{% endfor %}</select></label>
 <label>Station<select id="station" name="station_id" onchange="loadRooms()" disabled required><option value="">Bitte zuerst Haus wählen...</option></select></label>
 <label>Überprüfung für das Jahr:<select name="inspection_year" required>{% for y in range(2026,2041) %}<option value="{{y}}" {% if y==2026 %}selected{% endif %}>{{y}}</option>{% endfor %}</select></label>
-<label>Art der Überprüfung:<select name="inspection_type" required><option value="Inspektion">Inspektion</option><option value="Wartung" selected>Wartung</option><option value="Instandhaltung">Instandhaltung</option></select></label>
 </div><div id="roomInfo" class="card" style="display:none;margin-top:16px;background:#f8fafc"></div><p><button id="startBtn" class="btn success" type="submit" disabled>Wartung starten</button></p></form></div>
 {% else %}
 <div class="card"><h2>VCIP-Konfiguration erforderlich</h2><p>Nach jeder Anmeldung muss zuerst eine <b>.vcip</b>-Datei hochgeladen werden. Nur die daraus erkannte Haus-/Stations-/Zimmerstruktur steht anschließend für neue Wartungen zur Verfügung.</p><a class="btn success" href="/import">VCIP-Datei hochladen</a></div>
