@@ -92,6 +92,7 @@ def init_db():
         email_address TEXT,
         status TEXT NOT NULL DEFAULT 'open',
         created_at TEXT NOT NULL,
+        updated_at TEXT,
         completed_at TEXT,
         signature TEXT,
         email_sent_at TEXT,
@@ -153,6 +154,7 @@ def init_db():
     add_col("users", "role", "TEXT NOT NULL DEFAULT 'technician'")
     for col, definition in [
         ("inspector_name", "TEXT"), ("inspection_year", "INTEGER"), ("inspection_type", "TEXT"), ("email_address", "TEXT"),
+        ("updated_at", "TEXT"),
         ("email_sent_at", "TEXT"), ("email_error", "TEXT"), ("pdf_path", "TEXT")]:
         add_col("maintenances", col, definition)
     add_col("results", "manual", "INTEGER NOT NULL DEFAULT 0")
@@ -523,6 +525,15 @@ class NumberedCanvas(canvas.Canvas):
         self.restoreState()
 
 
+def format_datetime_de(value):
+    if not value:
+        return ""
+    try:
+        return datetime.fromisoformat(str(value)).strftime("%d.%m.%Y %H:%M")
+    except Exception:
+        return str(value).replace("T", " ")[:16]
+
+
 def format_date_de(value):
     if not value:
         return ""
@@ -776,7 +787,7 @@ def maintenance_start(request: Request,hauscode:str=Form(...),station_id:str=For
     if not rooms:return RedirectResponse("/?error=Keine+Zimmer+gefunden",303)
     if inspection_type not in INSPECTION_TITLES: return RedirectResponse("/?error=Ungültige+Art+der+Überprüfung",303)
     c=db(); now=datetime.now().isoformat(timespec="seconds"); u=current_user(request)
-    cur=c.execute("INSERT INTO maintenances(hauscode,station,station_id,technician_id,inspector_name,inspection_year,inspection_type,created_at) VALUES(?,?,?,?,?,?,?,?)",(hauscode.strip(),station,station_id.strip(),u["id"],u["display_name"],inspection_year,inspection_type,now));mid=cur.lastrowid
+    cur=c.execute("INSERT INTO maintenances(hauscode,station,station_id,technician_id,inspector_name,inspection_year,inspection_type,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",(hauscode.strip(),station,station_id.strip(),u["id"],u["display_name"],inspection_year,inspection_type,now,now));mid=cur.lastrowid
     c.executemany("INSERT INTO results(maintenance_id,room_name,manual) VALUES(?,?,0)",[(mid,r) for r in rooms]);c.commit();c.close();return RedirectResponse(f"/maintenance/{mid}",303)
 
 @app.get("/maintenance/{mid}",response_class=HTMLResponse)
@@ -790,12 +801,14 @@ def maintenance(request:Request,mid:int):
 @app.post("/maintenance/{mid}/save")
 async def maintenance_save(request:Request,mid:int):
     if not require_user(request):return RedirectResponse("/login",303)
-    form=await request.form();c=db();exists=c.execute("SELECT id FROM maintenances WHERE id=?",(mid,)).fetchone()
+    form=await request.form();c=db();exists=c.execute("SELECT id,status FROM maintenances WHERE id=?",(mid,)).fetchone()
     if not exists:c.close();return RedirectResponse("/",303)
+    if exists["status"] == "completed":
+        c.close();return RedirectResponse(f"/maintenance/{mid}?error=Diese+Überprüfung+ist+bereits+abgeschlossen+und+gesperrt",303)
     save_results_from_form(c,mid,form)
     inspector=(form.get("inspector_name") or "").strip();year=form.get("inspection_year") or None; inspection_type=(form.get("inspection_type") or "").strip()
     if inspection_type not in INSPECTION_TITLES: inspection_type="Wartung"
-    c.execute("UPDATE maintenances SET inspector_name=?,inspection_year=?,inspection_type=? WHERE id=?",(inspector,year,inspection_type,mid));c.commit();c.close();return RedirectResponse(f"/maintenance/{mid}",303)
+    c.execute("UPDATE maintenances SET inspector_name=?,inspection_year=?,inspection_type=?,updated_at=? WHERE id=?",(inspector,year,inspection_type,datetime.now().isoformat(timespec="seconds"),mid));c.commit();c.close();return RedirectResponse(f"/maintenance/{mid}",303)
 
 @app.post("/maintenance/{mid}/add-room")
 def add_room(request:Request,mid:int,room_name:str=Form(...)):
@@ -805,7 +818,7 @@ def add_room(request:Request,mid:int,room_name:str=Form(...)):
         c=db();m=c.execute("SELECT status FROM maintenances WHERE id=?",(mid,)).fetchone()
         if not m or m["status"] == "completed":
             c.close();return RedirectResponse(f"/maintenance/{mid}",303)
-        c.execute("INSERT INTO results(maintenance_id,room_name,manual) VALUES(?,?,1)",(mid,room_name));c.commit();c.close()
+        c.execute("INSERT INTO results(maintenance_id,room_name,manual) VALUES(?,?,1)",(mid,room_name));c.execute("UPDATE maintenances SET updated_at=? WHERE id=?",(datetime.now().isoformat(timespec="seconds"),mid));c.commit();c.close()
     return RedirectResponse(f"/maintenance/{mid}",303)
 
 @app.post("/maintenance/{mid}/complete")
@@ -821,7 +834,7 @@ async def maintenance_complete(request:Request,mid:int):
     save_results_from_form(c,mid,form)
     completed=datetime.now().isoformat(timespec="seconds")
     if inspection_type not in INSPECTION_TITLES: inspection_type="Wartung"
-    c.execute("UPDATE maintenances SET inspector_name=?,inspection_year=?,inspection_type=?,status='completed',completed_at=?,signature=? WHERE id=?",(inspector,year,inspection_type,completed,sig,mid));c.commit();c.close()
+    c.execute("UPDATE maintenances SET inspector_name=?,inspection_year=?,inspection_type=?,status='completed',updated_at=?,completed_at=?,signature=? WHERE id=?",(inspector,year,inspection_type,completed,completed,sig,mid));c.commit();c.close()
     pdf=make_pdf(mid);pdf_bytes=pdf.getvalue();filename=f"Zusammenfassung_Rufanlagen{'inspektion' if inspection_type=='Inspektion' else ('instandhaltung' if inspection_type=='Instandhaltung' else 'wartung')}_{mid}.pdf";path=PROTOCOL_DIR/filename;path.write_bytes(pdf_bytes)
     c=db();c.execute("UPDATE maintenances SET pdf_path=? WHERE id=?",(str(path),mid));c.commit();c.close()
     return RedirectResponse(f"/maintenance/{mid}/completed",303)
